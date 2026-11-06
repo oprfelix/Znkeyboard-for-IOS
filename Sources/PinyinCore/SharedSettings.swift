@@ -68,6 +68,11 @@ public enum SharedSettings {
         set { defaults.set(newValue, forKey: "doubleSpacePeriod") }
     }
 
+    public static var adaptiveTouch: Bool {
+        get { flag("adaptiveTouch", default: true) }
+        set { defaults.set(newValue, forKey: "adaptiveTouch") }
+    }
+
     public static var numberRow: Bool {
         get { flag("numberRow", default: false) }
         set { defaults.set(newValue, forKey: "numberRow") }

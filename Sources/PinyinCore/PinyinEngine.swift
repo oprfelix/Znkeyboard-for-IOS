@@ -41,10 +41,10 @@ public final class PinyinEngine {
         decoder = SentenceDecoder(lexicon: lexicon)
     }
 
-    public func candidates(_ input: String, before: SentenceDecoder.Context? = nil) -> [Candidate] {
+    public func candidates(_ input: String, before: SentenceDecoder.Context? = nil, taps: SentenceDecoder.Taps? = nil) -> [Candidate] {
         let words = wordCandidates(input)
         let limit = lexicon.model == nil ? 1 : C.maxSentences
-        let sentences = decoder.decode(input, before: before, limit: limit)
+        let sentences = decoder.decode(input, before: before, limit: limit, taps: taps)
         let length = input.utf8.count
         guard let sentence = sentences.first else { return withInitialWords(input, words, before) }
         let typed = input.replacingOccurrences(of: "'", with: "")

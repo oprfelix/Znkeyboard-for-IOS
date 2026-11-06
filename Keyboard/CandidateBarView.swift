@@ -1,9 +1,10 @@
 import UIKit
 
 /// The pinyin above and a row of candidates, as on Android.
-final class CandidateBarView: UIView {
+final class CandidateBarView: UIView, UIScrollViewDelegate {
     var onTap: ((Int) -> Void)?
     var onFix: (() -> Void)?
+    var onExpand: (() -> Void)?
     var onPolish: (() -> Void)?
     var onTranslate: (() -> Void)?
     var onOffer: (() -> Void)?
@@ -11,9 +12,16 @@ final class CandidateBarView: UIView {
 
     private let label = UILabel()
     private let scroller = UIScrollView()
-    private let row = UIStackView()
     private let fix = UIButton(type: .system)
+    private let expand = UIButton(type: .system)
+    private let divider = UIView()
+    private var fixWidth: NSLayoutConstraint!
+    private var expandShownUp: Bool?
     private var buttons: [UIButton] = []
+    private var items: [String] = []
+    private var placed = 0
+    private var rowEnd: CGFloat = 0
+    private var placedSize = CGSize.zero
     private let tools = UIStackView()
     private let polish = UIButton(type: .system)
     private let translate = UIButton(type: .system)
@@ -25,14 +33,18 @@ final class CandidateBarView: UIView {
         label.font = .systemFont(ofSize: 12)
         label.textColor = .secondaryLabel
         label.lineBreakMode = .byTruncatingHead
-        row.axis = .horizontal
-        row.spacing = 2
-        row.alignment = .center
         scroller.showsHorizontalScrollIndicator = false
+        scroller.delegate = self
+        scroller.delaysContentTouches = false
+        fixWidth = fix.widthAnchor.constraint(equalToConstant: 0)
+        fixWidth.isActive = true
         fix.titleLabel?.font = .systemFont(ofSize: 15)
         fix.setTitleColor(.label, for: .normal)
         fix.addTarget(self, action: #selector(fixTapped), for: .touchUpInside)
-        for item in [label, scroller, fix] as [UIView] {
+        expand.tintColor = .label
+        expand.addTarget(self, action: #selector(expandTapped), for: .touchUpInside)
+        divider.backgroundColor = .separator
+        for item in [label, scroller, fix, divider, expand] as [UIView] {
             item.translatesAutoresizingMaskIntoConstraints = false
             addSubview(item)
         }
@@ -69,60 +81,112 @@ final class CandidateBarView: UIView {
             offerClose.heightAnchor.constraint(equalToConstant: 34),
             offerClose.widthAnchor.constraint(equalToConstant: 40),
         ])
-        row.translatesAutoresizingMaskIntoConstraints = false
-        scroller.addSubview(row)
         NSLayoutConstraint.activate([
             label.topAnchor.constraint(equalTo: topAnchor, constant: 2),
             label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
-            label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+            label.trailingAnchor.constraint(equalTo: divider.leadingAnchor, constant: -8),
             scroller.topAnchor.constraint(equalTo: label.bottomAnchor),
             scroller.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
             scroller.bottomAnchor.constraint(equalTo: bottomAnchor),
-            fix.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            expand.trailingAnchor.constraint(equalTo: trailingAnchor),
+            expand.centerYAnchor.constraint(equalTo: centerYAnchor),
+            expand.widthAnchor.constraint(equalToConstant: 44),
+            expand.heightAnchor.constraint(equalTo: heightAnchor),
+            divider.trailingAnchor.constraint(equalTo: expand.leadingAnchor),
+            divider.centerYAnchor.constraint(equalTo: centerYAnchor),
+            divider.widthAnchor.constraint(equalToConstant: 1 / UIScreen.main.scale),
+            divider.heightAnchor.constraint(equalToConstant: 26),
+            fix.trailingAnchor.constraint(equalTo: divider.leadingAnchor, constant: -4),
             fix.centerYAnchor.constraint(equalTo: scroller.centerYAnchor),
-            fix.widthAnchor.constraint(equalToConstant: 48),
             scroller.trailingAnchor.constraint(equalTo: fix.leadingAnchor, constant: -4),
-            row.topAnchor.constraint(equalTo: scroller.topAnchor),
-            row.bottomAnchor.constraint(equalTo: scroller.bottomAnchor),
-            row.leadingAnchor.constraint(equalTo: scroller.leadingAnchor),
-            row.trailingAnchor.constraint(equalTo: scroller.trailingAnchor),
-            row.heightAnchor.constraint(equalTo: scroller.heightAnchor),
         ])
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("no storyboards") }
 
-    func show(label text: String, items: [String], fixTitle: String?) {
+    func show(label text: String, items: [String], fixTitle: String?, expanded: Bool) {
         tools.isHidden = true
         label.isHidden = false
         scroller.isHidden = false
         label.text = text
-        fix.setTitle(fixTitle, for: .normal)
+        if fix.title(for: .normal) != fixTitle { fix.setTitle(fixTitle, for: .normal) }
         fix.isHidden = fixTitle == nil
-        while buttons.count < min(items.count, Self.maxShown) {
-            let button = UIButton(type: .system)
-            button.tag = buttons.count
-            button.titleLabel?.font = .systemFont(ofSize: 20)
-            button.setTitleColor(.label, for: .normal)
-            button.contentEdgeInsets = UIEdgeInsets(top: 0, left: 10, bottom: 0, right: 10)
-            button.addTarget(self, action: #selector(itemTapped), for: .touchUpInside)
-            buttons.append(button)
-            row.addArrangedSubview(button)
-        }
-        for (index, button) in buttons.enumerated() {
-            let shown = index < items.count
-            button.isHidden = !shown
-            if shown {
-                button.setTitle(items[index], for: .normal)
-                button.titleLabel?.font = index == 0 ? .systemFont(ofSize: 20, weight: .semibold) : .systemFont(ofSize: 20)
-            }
-        }
+        let width: CGFloat = fixTitle == nil ? 0 : 48
+        if fixWidth.constant != width { fixWidth.constant = width }
+        setExpand(hidden: items.isEmpty, up: expanded)
+        self.items = items
         layoutIfNeeded()
+        placeItems()
+    }
+
+    /// The small pinyin line sits over the candidates' column: a tap there picks the one below.
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        if !scroller.isHidden, point.y < scroller.frame.minY, point.x < scroller.frame.maxX, self.point(inside: point, with: event) {
+            return super.hitTest(CGPoint(x: point.x, y: scroller.frame.minY + 1), with: event)
+        }
+        return super.hitTest(point, with: event)
+    }
+
+    private func setExpand(hidden: Bool, up: Bool) {
+        expand.isHidden = hidden
+        divider.isHidden = hidden
+        guard expandShownUp != up else { return }
+        expandShownUp = up
+        let symbol = UIImage.SymbolConfiguration(pointSize: 18, weight: .regular)
+        expand.setImage(UIImage(systemName: up ? "chevron.up" : "chevron.down", withConfiguration: symbol), for: .normal)
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        if scroller.bounds.size != placedSize { placeItems() }
+    }
+
+    /// Lays the row out by hand, this runs on every key. Only what can be seen soon is placed.
+    private func placeItems() {
+        placedSize = scroller.bounds.size
+        placed = 0
+        rowEnd = 0
+        placeMore(upTo: placedSize.width * Self.screensAhead)
+        for index in placed..<max(placed, buttons.count) { buttons[index].isHidden = true }
         // A sentence wider than the row shows its end: that is where the typing is.
-        let first = buttons.first
-        let offset = first.flatMap { !$0.isHidden && $0.frame.width > scroller.bounds.width ? $0.frame.maxX - scroller.bounds.width : nil } ?? 0
+        let first = placed > 0 ? buttons[0].frame.maxX : 0
+        let offset = first > placedSize.width ? first - placedSize.width : 0
         scroller.setContentOffset(CGPoint(x: offset, y: 0), animated: false)
+    }
+
+    private func placeMore(upTo end: CGFloat) {
+        let limit = min(items.count, Self.maxShown)
+        while placed < limit, rowEnd < end {
+            let button = button(at: placed)
+            let text = items[placed]
+            let font = placed == 0 ? Self.firstFont : Self.itemFont
+            if button.title(for: .normal) != text { button.setTitle(text, for: .normal) }
+            if button.titleLabel?.font !== font { button.titleLabel?.font = font }
+            let width = ceil((text as NSString).size(withAttributes: [.font: font]).width) + Self.itemPadding
+            button.frame = CGRect(x: rowEnd, y: 0, width: width, height: placedSize.height)
+            button.isHidden = false
+            rowEnd += width + 2
+            placed += 1
+        }
+        let more = placed < limit ? placedSize.width : 0
+        scroller.contentSize = CGSize(width: rowEnd + more, height: placedSize.height)
+    }
+
+    private func button(at index: Int) -> UIButton {
+        if index < buttons.count { return buttons[index] }
+        let button = UIButton(type: .custom)
+        button.tag = index
+        button.setTitleColor(.label, for: .normal)
+        button.setTitleColor(.secondaryLabel, for: .highlighted)
+        button.addTarget(self, action: #selector(itemTapped), for: .touchUpInside)
+        buttons.append(button)
+        scroller.addSubview(button)
+        return button
+    }
+
+    func scrollViewDidScroll(_ view: UIScrollView) {
+        placeMore(upTo: view.contentOffset.x + placedSize.width * Self.screensAhead)
     }
 
     /// The toolbar when nothing is being typed; [offering] asks whether to translate what was copied.
@@ -130,6 +194,7 @@ final class CandidateBarView: UIView {
         label.isHidden = true
         scroller.isHidden = true
         fix.isHidden = true
+        setExpand(hidden: true, up: false)
         tools.isHidden = false
         translate.setTitle("翻译为\(languageName)", for: .normal)
         polish.isHidden = offering
@@ -153,6 +218,11 @@ final class CandidateBarView: UIView {
     @objc private func offerCloseTapped() { onDismissOffer?() }
     @objc private func itemTapped(_ sender: UIButton) { onTap?(sender.tag) }
     @objc private func fixTapped() { onFix?() }
+    @objc private func expandTapped() { onExpand?() }
 
     private static let maxShown = 40
+    private static let screensAhead: CGFloat = 2
+    private static let itemPadding: CGFloat = 20
+    private static let itemFont = UIFont.systemFont(ofSize: 20)
+    private static let firstFont = UIFont.systemFont(ofSize: 20, weight: .semibold)
 }

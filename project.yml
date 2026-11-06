@@ -47,6 +47,8 @@ targets:
         buildPhase: resources
       - path: Sources/PinyinCore/Resources/english.txt
         buildPhase: resources
+      - path: Sources/PinyinCore/Resources/en_char_trigram.bin
+        buildPhase: resources
     settings:
       base:
         PRODUCT_NAME: ZnKeyboardExtension

@@ -4,6 +4,8 @@ import UIKit
 /// The keyboard extension: a thin view over KeyboardSession.
 final class KeyboardViewController: UIInputViewController, TextTarget {
     private let keys = KeyboardKeysView()
+    private let grid = CandidateGridView()
+    private let typing = AdaptiveTyping()
     private let bar = CandidateBarView()
     private var session: KeyboardSession?
     private var heightConstraint: NSLayoutConstraint?
@@ -28,7 +30,8 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
     override func viewDidLoad() {
         super.viewDidLoad()
         guard let root = view else { return }
-        for item in [card, bar, keys] as [UIView] {
+        root.isMultipleTouchEnabled = true
+        for item in [card, bar, keys, grid] as [UIView] {
             item.translatesAutoresizingMaskIntoConstraints = false
             root.addSubview(item)
         }
@@ -45,7 +48,14 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
             keys.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             keys.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             keys.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+            grid.topAnchor.constraint(equalTo: keys.topAnchor),
+            grid.leadingAnchor.constraint(equalTo: keys.leadingAnchor),
+            grid.trailingAnchor.constraint(equalTo: keys.trailingAnchor),
+            grid.bottomAnchor.constraint(equalTo: keys.bottomAnchor),
         ])
+        grid.isHidden = true
+        grid.onTap = { [weak self] index in self?.session?.tapItem(index) }
+        bar.onExpand = { [weak self] in self?.session?.toggleExpanded() }
         cardHeight = card.heightAnchor.constraint(equalToConstant: 0)
         cardHeight.isActive = true
         card.isHidden = true
@@ -65,6 +75,9 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
         (view as? UIInputView)?.allowsSelfSizing = true
         heightConstraint = height
         keys.onKey = { [weak self] key in self?.pressed(key) }
+        keys.onLetter = { [weak self] text, tap, sample in self?.typed(text, tap, sample) }
+        keys.typing = typing
+        typing.load()
         keys.onGlobe = { [weak self] view, event in self?.handleInputModeList(from: view, with: event) }
         bar.onTap = { [weak self] index in self?.session?.tapItem(index) }
         bar.onFix = { [weak self] in self?.session?.tapFix() }
@@ -84,6 +97,7 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
         keys.playsSound = hasFullAccess && SharedSettings.keySoundEnabled
         keys.showsPopup = SharedSettings.keyPopupEnabled
         keys.showsNumberRow = SharedSettings.numberRow
+        typing.adaptiveEnabled = SharedSettings.adaptiveTouch
         if engineRules != SharedSettings.fuzzyRules {
             saveLearning()
             loadEngine()
@@ -111,7 +125,7 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
         let data = (try? Data(contentsOf: Self.learnedFile)).flatMap(PinyinUserData.decode) ?? PinyinUserData()
         let learner = PinyinLearner(data: data, lexicon: lexicon)
         let english = bundle.path(forResource: "english", ofType: "txt").flatMap { try? String(contentsOfFile: $0, encoding: .utf8) }.map(EnglishWords.init)
-        session = KeyboardSession(lexicon: lexicon, learner: learner, english: english, target: self)
+        session = KeyboardSession(lexicon: lexicon, learner: learner, english: english, target: self, decodesInBackground: true, touchLearner: typing.learner)
         session?.onChange = { [weak self] in self?.render() }
     }
 
@@ -128,6 +142,27 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
         pasteboardTimer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in self?.noticeCopied() }
     }
 
+    // Without these the system holds touches near the screen edges back to see if they are its
+    // own gestures, which makes the bottom row and the outer keys lag or drop.
+    override var preferredScreenEdgesDeferringSystemGestures: UIRectEdge { .all }
+
+    override func viewWillLayoutSubviews() {
+        super.viewWillLayoutSubviews()
+        typing.setLandscape(view.bounds.width > view.bounds.height * 1.5 && view.bounds.width > 500)
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        view.window?.isMultipleTouchEnabled = true
+        view.window?.gestureRecognizers?.forEach { $0.delaysTouchesBegan = false }
+        // The window's own tap and pan recognizers made quick taps vanish before reaching the keys.
+        for recognizer in view.window?.gestureRecognizers ?? []
+        where recognizer is UITapGestureRecognizer || recognizer is UIPanGestureRecognizer || String(describing: type(of: recognizer)).contains("DoubleTap") {
+            recognizer.isEnabled = false
+        }
+        (view.window?.superview?.gestureRecognizers ?? []).forEach { $0.delaysTouchesBegan = false }
+    }
+
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
         pasteboardTimer?.invalidate()
@@ -135,6 +170,8 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
     }
 
     private func saveLearning() {
+        typing.save()
+        session?.settle()
         guard let data = session?.learner.data.encode() else { return }
         try? FileManager.default.createDirectory(at: Self.learnedFile.deletingLastPathComponent(), withIntermediateDirectories: true)
         try? data.write(to: Self.learnedFile, options: .atomic)
@@ -145,33 +182,62 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
         guard let session, !session.isComposing else { return }
         if textDocumentProxy.documentContextBeforeInput != expectedBefore {
             expectedBefore = textDocumentProxy.documentContextBeforeInput
+            typing.learner.onContextChanged(expectedBefore)
             session.fieldChanged()
         }
+    }
+
+    private func typed(_ text: String, _ tap: [Float]?, _ sample: TypingLearner.Sample?) {
+        guard let session else { return }
+        hasNewCopy = false
+        for character in text {
+            typing.learner.onCommitted(character, sample)
+            session.type(character, tap: tap, sample: sample)
+        }
+        afterKey(session)
     }
 
     private func pressed(_ key: KeyboardKeysView.Key) {
         guard let session else { return }
         hasNewCopy = false
         switch key {
-        case let .text(text): text.forEach(session.type)
-        case .space: session.space()
-        case .backspace: session.backspace()
+        case let .text(text):
+            typed(text, nil, nil)
+            return
+        case let .literal(text):
+            text.forEach { typing.learner.onCommitted($0, nil) }
+            session.typeLiteral(text)
+        case .space:
+            typing.learner.onCommitted(" ", nil)
+            session.space()
+        case .backspace:
+            typing.learner.onBackspace()
+            session.backspace()
         case .returnKey:
+            typing.learner.onCommitted("\n", nil)
             if !session.returnKey() { textDocumentProxy.insertText("\n") }
         case .language: session.toggleLanguage()
         case .nextKeyboard: advanceToNextInputMode()
         }
-        expectedBefore = textDocumentProxy.documentContextBeforeInput
+        afterKey(session)
+    }
+
+    private func afterKey(_ session: KeyboardSession) {
+        if !session.isComposing { expectedBefore = textDocumentProxy.documentContextBeforeInput }
         keys.setChinese(session.language == .chinese)
         updateShift()
     }
 
     private func render() {
         guard let session else {
-            bar.show(label: "词典没有加载", items: [], fixTitle: nil)
+            bar.show(label: "词典没有加载", items: [], fixTitle: nil, expanded: false)
             return
         }
         layoutCard()
+        let expanded = session.expanded && !session.items.isEmpty
+        if expanded { grid.show(session.items) }
+        grid.isHidden = !expanded
+        keys.isHidden = expanded
         if !session.isComposing, session.items.isEmpty {
             bar.showTools(languageName: SharedSettings.translateLanguage.chineseName, offering: hasNewCopy)
             return
@@ -179,7 +245,8 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
         bar.show(
             label: session.isComposing ? session.label : "",
             items: session.items,
-            fixTitle: session.canFix ? (session.isChoosingWord ? "取消" : (session.editCaret == nil ? "改词" : "完成")) : nil
+            fixTitle: session.canFix ? (session.isChoosingWord ? "取消" : (session.editCaret == nil ? "改词" : "完成")) : nil,
+            expanded: expanded
         )
     }
 
@@ -226,11 +293,13 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
         let typing = session.map { $0.isComposing || !$0.items.isEmpty } ?? false
         let barShown = !showing || typing
         bar.isHidden = !barShown
-        barHeight.constant = barShown ? Self.barHeight : 0
+        let barSize = barShown ? Self.barHeight : 0
+        if barHeight.constant != barSize { barHeight.constant = barSize }
         let cardSize = showing
             ? card.systemLayoutSizeFitting(CGSize(width: view.bounds.width, height: 0), withHorizontalFittingPriority: .required, verticalFittingPriority: .fittingSizeLevel).height
             : 0
-        heightConstraint?.constant = keysHeight + barHeight.constant + cardSize
+        let height = keysHeight + barSize + cardSize
+        if heightConstraint?.constant != height { heightConstraint?.constant = height }
     }
 
     private func closeCard() {

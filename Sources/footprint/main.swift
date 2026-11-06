@@ -11,6 +11,35 @@ func footprintMB() -> Double {
     return result == KERN_SUCCESS ? Double(info.phys_footprint) / 1_048_576 : -1
 }
 
+// With a fifth argument, bench.tsv, each letter's tap goes in too, on the bench's keyboard.
+let benchWidth: Float = 411, pad: Float = 6, gap: Float = 6
+let pitch = (benchWidth - 2 * pad + gap) / 10
+var centersX = [Float](repeating: 0, count: 26), centersY = [Float](repeating: 0, count: 26)
+for (row, letters) in ["qwertyuiop", "asdfghjkl", "zxcvbnm"].enumerated() {
+    let left = pad + [Float(0), 0.5, 1.5][row] * pitch
+    for (i, letter) in letters.utf8.enumerated() {
+        centersX[Int(letter) - 97] = left + Float(i) * pitch + (pitch - gap) / 2
+        centersY[Int(letter) - 97] = 54 * (Float(row) + 0.5)
+    }
+}
+let keys = KeyGeometry(centersX: centersX, centersY: centersY, pitchX: pitch, pitchY: 54)
+let untrained = TouchModel()
+let touch = TouchDecoder(touchModel: { untrained }, languageModel: CharLanguageModel())
+var tapsByTyped: [String: SentenceDecoder.Taps] = [:]
+if CommandLine.arguments.count > 4 {
+    for line in try! String(contentsOfFile: CommandLine.arguments[4], encoding: .utf8).split(separator: "\n") where !line.hasPrefix("#") {
+        let f = line.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
+        guard let column = f.last, column.contains(","), column.contains(";") else { continue }
+        for typed in f where typed.utf8.count == column.split(separator: ";").count && typed.utf8.allSatisfy({ $0 >= 97 && $0 <= 122 }) {
+            tapsByTyped[typed] = column.split(separator: ";").map { tap in
+                let p = tap.split(separator: ",").map { Float($0)! }
+                return touch.letterCosts(x: p[0], y: p[1], keys: keys)
+            }
+        }
+    }
+}
+func tapsOf(_ typed: String) -> SentenceDecoder.Taps? { tapsByTyped[typed] }
+
 // Types every line of the bench file through the engine and compares the first full candidate
 // with what the Android engine chose: footprint <dict.bin> <lm.bin> <kotlin cases.tsv>
 let args = CommandLine.arguments
@@ -29,7 +58,7 @@ for line in lines {
     if f.count < 5 { continue }
     let (set, typed, expected, got) = (f[0], f[2], f[3], f[4])
     let started = DispatchTime.now().uptimeNanoseconds
-    let found = engine.candidates(typed)
+    let found = engine.candidates(typed, taps: tapsOf(typed))
     latencies.append(Double(DispatchTime.now().uptimeNanoseconds - started) / 1e6)
     let mine = found.first { $0.consumed >= typed.utf8.count }?.text ?? ""
     var t = totals[set] ?? Total()

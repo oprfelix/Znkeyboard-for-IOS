@@ -11,6 +11,9 @@ final class ReadingCardView: UIView {
     private let action = UIButton(type: .system)
     private let loading = UIActivityIndicatorView(style: .medium)
     private var bodyHeight: NSLayoutConstraint!
+    private static let topInset: CGFloat = 0
+    private static let headerHeight: CGFloat = 30
+    private static let sideInset: CGFloat = 16
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -29,7 +32,7 @@ final class ReadingCardView: UIView {
         action.setTitleColor(.white, for: .normal)
         action.backgroundColor = .systemBlue
         action.layer.cornerRadius = 10
-        action.contentEdgeInsets = UIEdgeInsets(top: 4, left: 14, bottom: 4, right: 14)
+        action.contentEdgeInsets = UIEdgeInsets(top: 0, left: 14, bottom: 0, right: 14)
         action.addTarget(self, action: #selector(actionTapped), for: .touchUpInside)
         for item in [title, close, body, action, loading] as [UIView] {
             item.translatesAutoresizingMaskIntoConstraints = false
@@ -37,22 +40,24 @@ final class ReadingCardView: UIView {
         }
         bodyHeight = body.heightAnchor.constraint(equalToConstant: 24)
         NSLayoutConstraint.activate([
-            title.topAnchor.constraint(equalTo: topAnchor, constant: 6),
-            title.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
-            close.centerYAnchor.constraint(equalTo: title.centerYAnchor),
-            close.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
-            close.widthAnchor.constraint(equalToConstant: 36),
-            action.centerYAnchor.constraint(equalTo: title.centerYAnchor),
+            // The header is as tall as the button, so the button clears the keyboard's top edge.
+            action.topAnchor.constraint(equalTo: topAnchor, constant: Self.topInset),
+            action.heightAnchor.constraint(equalToConstant: Self.headerHeight),
             action.trailingAnchor.constraint(equalTo: close.leadingAnchor, constant: -4),
-            loading.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
-            loading.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 6),
-            body.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 6),
-            body.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
-            body.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+            title.centerYAnchor.constraint(equalTo: action.centerYAnchor),
+            title.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Self.sideInset),
+            close.centerYAnchor.constraint(equalTo: action.centerYAnchor),
+            close.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
+            close.widthAnchor.constraint(equalToConstant: 36),
+            loading.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Self.sideInset),
+            loading.topAnchor.constraint(equalTo: action.bottomAnchor, constant: 8),
+            body.topAnchor.constraint(equalTo: action.bottomAnchor, constant: 8),
+            body.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Self.sideInset),
+            body.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Self.sideInset),
             bodyHeight,
         ])
         // Yields to the zero height the keyboard gives the card while it is hidden.
-        let bottom = body.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8)
+        let bottom = body.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -10)
         bottom.priority = .defaultHigh
         bottom.isActive = true
     }
@@ -75,7 +80,7 @@ final class ReadingCardView: UIView {
         loading.stopAnimating()
         action.setTitle(actionTitle, for: .normal)
         action.isHidden = actionTitle == nil
-        let width = max(bounds.width, UIScreen.main.bounds.width) - 24
+        let width = max(bounds.width, UIScreen.main.bounds.width) - 2 * Self.sideInset
         let needed = body.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude)).height
         bodyHeight.constant = min(ceil(needed), 124)
     }

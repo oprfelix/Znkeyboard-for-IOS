@@ -92,6 +92,10 @@ public final class SentenceDecoder {
         static let missingLetterCost: Float = 3.5
         static let lostInitialCost: Float = 5
         static let slipCost: Float = 7
+        static let touchSlipCost: Float = 2
+        static let touchWeight: Float = 1
+        static let maxTouchExtra: Float = 4
+        static let shortTouchSlipCost: Float = 1
         static let maxInitialsWord = 6
         static let initials = Set("bpmfdtnlgkhjqxzcsryw".utf8)
         static let vowels = Set("aoe".utf8)
@@ -125,7 +129,11 @@ public final class SentenceDecoder {
         self.lexicon = lexicon
     }
 
-    public func decode(_ input: String, before: Context?, limit: Int) -> [Sentence] {
+    /// Per input position, how well the tap fitted each letter (the best 0, too far +∞), or nil
+    /// for a position without a tap.
+    public typealias Taps = [[Float]?]
+
+    public func decode(_ input: String, before: Context?, limit: Int, taps: Taps? = nil) -> [Sentence] {
         let letters = Array(input.utf8)
         let n = letters.count
         if n == 0 || n > C.maxInput { return [] }
@@ -135,7 +143,7 @@ public final class SentenceDecoder {
         var piecesAt = [[Piece]?](repeating: nil, count: n)
         func pieces(_ at: Int) -> [Piece] {
             if let known = piecesAt[at] { return known }
-            let read = readPieces(letters, at)
+            let read = readPieces(letters, at, taps)
             piecesAt[at] = read
             return read
         }
@@ -309,7 +317,7 @@ public final class SentenceDecoder {
         return result
     }
 
-    private func readPieces(_ input: [UInt8], _ start: Int) -> [Piece] {
+    private func readPieces(_ input: [UInt8], _ start: Int, _ taps: Taps?) -> [Piece] {
         var result: [Piece] = []
         var seen = Set<String>()
         func add(_ end: Int, _ text: String, _ isPrefix: Bool, _ cost: Float) {
@@ -326,10 +334,19 @@ public final class SentenceDecoder {
                     add(end, typed, true, C.stillTypingCost)
                 }
                 let count = end - start
+                let tapAt: (Int) -> [Float]? = { at in
+                    guard let taps, start + at < taps.count else { return nil }
+                    return taps[start + at]
+                }
                 let lostInitial = count <= 2 && C.zeroInitialVowels.contains(input[start])
                 let noSyllable = count == 2 && !isRaw && input[start..<end].contains { C.zeroInitialVowels.contains($0) }
                 if count >= 3 || (count == 2 && input[end - 1] == 110) || lostInitial || noSyllable {
-                    for (fixed, cost) in corrections(Array(input[start..<end])) { add(end, fixed, false, cost) }
+                    for (fixed, cost) in corrections(Array(input[start..<end]), tapAt) { add(end, fixed, false, cost) }
+                } else if count == 2 && taps != nil {
+                    // Two letters could as well be 简拼, unless the taps say a key was nearly missed.
+                    for (fixed, cost) in corrections(Array(input[start..<end]), tapAt, tapsOnly: true) {
+                        add(end, fixed, false, cost + C.shortTouchSlipCost)
+                    }
                 }
             }
         }
@@ -345,13 +362,31 @@ public final class SentenceDecoder {
         return result
     }
 
-    private func corrections(_ typed: [UInt8]) -> [(String, Float)] {
+    private func corrections(_ typed: [UInt8], _ tapAt: (Int) -> [Float]?, tapsOnly: Bool = false) -> [(String, Float)] {
         var result: [(String, Float)] = []
         let raw = lexicon.rawSyllables
         func consider(_ candidate: [UInt8], _ cost: Float) {
             if candidate == typed { return }
             let text = String(decoding: candidate, as: UTF8.self)
             if raw.contains(text) { result.append((text, cost)) }
+        }
+        /// Each letter with a tap swapped for another key, at what the tap says that costs.
+        func addTapSlips() {
+            for at in typed.indices {
+                guard let costs = tapAt(at), typed[at] >= 97, typed[at] <= 122 else { continue }
+                let own = Int(typed[at]) - 97
+                for letter in 0..<26 where letter != own && costs[letter].isFinite {
+                    let extra = max(costs[letter] - costs[own], 0)
+                    if extra > C.maxTouchExtra { continue }
+                    var other = typed
+                    other[at] = UInt8(97 + letter)
+                    consider(other, C.touchSlipCost + C.touchWeight * extra)
+                }
+            }
+        }
+        if tapsOnly {
+            addTapSlips()
+            return Self.cheapestOfEach(result)
         }
         if C.zeroInitialVowels.contains(typed[0]) {
             consider([UInt8(ascii: "y")] + typed, C.lostInitialCost)
@@ -369,7 +404,9 @@ public final class SentenceDecoder {
             fewer.remove(at: at)
             if !fewer.isEmpty { consider(fewer, C.slipCost) }
         }
+        addTapSlips()
         for at in typed.indices {
+            if tapAt(at) != nil && typed[at] >= 97 && typed[at] <= 122 { continue }
             for neighbour in Self.neighbours[typed[at]] ?? [] {
                 var other = typed
                 other[at] = neighbour
@@ -383,6 +420,10 @@ public final class SentenceDecoder {
                 consider(swapped, C.slipCost)
             }
         }
+        return Self.cheapestOfEach(result)
+    }
+
+    private static func cheapestOfEach(_ result: [(String, Float)]) -> [(String, Float)] {
         var chosen: [String: Float] = [:]
         var order: [String] = []
         for (index, item) in result.enumerated().sorted(by: { $0.element.1 != $1.element.1 ? $0.element.1 < $1.element.1 : $0.offset < $1.offset }) {

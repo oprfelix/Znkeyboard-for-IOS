@@ -216,6 +216,7 @@ struct SetupView: View {
     @State private var autoCapitalize = SharedSettings.autoCapitalize
     @State private var doubleSpace = SharedSettings.doubleSpacePeriod
     @State private var numberRow = SharedSettings.numberRow
+    @State private var adaptiveTouch = SharedSettings.adaptiveTouch
     @State private var models: [String] = []
     @State private var keyboardAdded = false
     @State private var fullAccess = false
@@ -481,6 +482,7 @@ struct SetupView: View {
                 setting("按键声音", "需要完全访问", $keySound) { SharedSettings.keySoundEnabled = $0 }
                 setting("按键气泡", "按下时放大显示字母", $keyPopup) { SharedSettings.keyPopupEnabled = $0 }
                 setting("数字行", "在字母上方显示数字键", $numberRow) { SharedSettings.numberRow = $0 }
+                setting("按键学习", "记住你的落点习惯，按偏时自动纠正", $adaptiveTouch) { SharedSettings.adaptiveTouch = $0 }
                 setting("英文句首大写", "英文模式下自动大写", $autoCapitalize) { SharedSettings.autoCapitalize = $0 }
                 setting("双击空格输入句号", nil, $doubleSpace) { SharedSettings.doubleSpacePeriod = $0 }
             }

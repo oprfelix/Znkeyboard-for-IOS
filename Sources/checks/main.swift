@@ -174,8 +174,21 @@ func sessionChecks(_ args: [String]) {
     let words = try! String(contentsOfFile: "Sources/PinyinCore/Resources/english.txt", encoding: .utf8)
     let field = FakeField()
     let session = KeyboardSession(lexicon: lexicon, learner: learner, english: EnglishWords(words: words), target: field)
-    func typed(_ text: String) { text.forEach(session.type) }
+    func typed(_ text: String) { text.forEach { session.type($0) } }
     func reset() { while session.isComposing { session.backspace() }; field.text = ""; session.fieldChanged() }
+
+    let backgroundField = FakeField()
+    let background = KeyboardSession(lexicon: lexicon, learner: learner, english: EnglishWords(words: words), target: backgroundField, decodesInBackground: true)
+    "wogenniyikuaichifan".forEach { background.type($0) }
+    check("background letters show at once", backgroundField.marked == "wogenniyikuaichifan" && background.composing == "wogenniyikuaichifan")
+    background.settle()
+    typed("wogenniyikuaichifan")
+    check("background reads as the foreground", background.candidates.map(\.text) == session.candidates.map(\.text), background.candidates.first?.text as Any)
+    background.backspace()
+    background.backspace()
+    background.space()
+    check("space waits for the candidates", !background.isComposing && backgroundField.text.hasPrefix("我跟你一块"), backgroundField.text)
+    reset()
 
     typed("nihao")
     check("letters are marked", field.marked == "nihao" && session.label == "nihao", session.label)

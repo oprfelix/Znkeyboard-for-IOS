@@ -57,13 +57,36 @@ public final class KeyboardSession {
     private var englishWordJustCommitted = false
     private var englishWordsInARow = 0
     private var composingAfterLatin = false
+    private let touchLearner: TypingLearner?
 
-    public init(lexicon: PinyinLexicon, learner: PinyinLearner, english: EnglishWords?, target: TextTarget) {
+    /// One reading of the letters, handed to [decoding].
+    private struct Job {
+        let id: Int
+        let text: String
+        let before: SentenceDecoder.Context?
+        let taps: SentenceDecoder.Taps
+    }
+
+    private var taps = PinyinTapBuffer()
+    private let decoding: DispatchQueue?
+    private var nextJob = 0
+    /// The newest letters whose candidates are not in yet.
+    private var waiting: Job?
+    private var running: Int?
+    /// Written on [decoding]; read on the main thread once that queue is known to be idle.
+    private var decoded: (id: Int, found: [PinyinEngine.Candidate], whole: Bool)?
+
+    /// With [decodesInBackground] typing never waits for the engine: letters show at once and the
+    /// candidates follow. The engine, lexicon and learner are then touched by the main thread only
+    /// after [settle], so they never run on two threads at a time.
+    public init(lexicon: PinyinLexicon, learner: PinyinLearner, english: EnglishWords?, target: TextTarget, decodesInBackground: Bool = false, touchLearner: TypingLearner? = nil) {
+        self.touchLearner = touchLearner
         self.lexicon = lexicon
         self.learner = learner
         self.english = english
         self.target = target
         engine = PinyinEngine(lexicon: lexicon)
+        decoding = decodesInBackground ? DispatchQueue(label: "pinyin.decode", qos: .userInteractive) : nil
     }
 
     // MARK: What the bar shows
@@ -95,7 +118,8 @@ public final class KeyboardSession {
 
     // MARK: Keys
 
-    public func type(_ character: Character) {
+    /// [tap] is how the touch fitted each letter key, and [sample] its record for the learner.
+    public func type(_ character: Character, tap: [Float]? = nil, sample: TypingLearner.Sample? = nil) {
         lastSpace = nil
         guard language == .chinese else {
             target?.commitText(String(character))
@@ -121,7 +145,7 @@ public final class KeyboardSession {
                 editCaret = at + 1
                 update(insert(character, at: at))
             } else {
-                update(composing + String(character))
+                update(composing + String(character), tap: tap, sample: sample)
             }
             return
         }
@@ -130,6 +154,7 @@ public final class KeyboardSession {
             return
         }
         if isComposing {
+            settle()
             if let digit = character.wholeNumberValue, digit >= 1, digit <= candidates.count, editCaret == nil {
                 select(digit - 1, byHand: true)
                 return
@@ -142,7 +167,19 @@ public final class KeyboardSession {
         changed()
     }
 
+    /// [text] as it is, with no Chinese punctuation put in its place.
+    public func typeLiteral(_ text: String) {
+        lastSpace = nil
+        englishRun = false
+        if isComposing { commitWholeTop() }
+        learner.breakChain()
+        predictions = []
+        target?.commitText(text)
+        changed()
+    }
+
     public func space() {
+        settle()
         englishRun = false
         if editCaret != nil {
             editCaret = nil
@@ -169,6 +206,7 @@ public final class KeyboardSession {
 
     public func backspace() {
         guard isComposing else {
+            settle()
             englishRun = false
             learner.breakChain()
             predictions = []
@@ -188,6 +226,7 @@ public final class KeyboardSession {
 
     /// Return: the typed letters go in as they are; otherwise the host app's newline or send.
     public func returnKey() -> Bool {
+        settle()
         englishRun = false
         guard isComposing else { return false }
         commitRaw()
@@ -195,6 +234,7 @@ public final class KeyboardSession {
     }
 
     public func toggleLanguage() {
+        settle()
         commitRaw()
         englishRun = false
         learner.breakChain()
@@ -205,6 +245,7 @@ public final class KeyboardSession {
 
     /// The caret moved or the field changed by something other than this keyboard.
     public func fieldChanged() {
+        settle()
         learner.breakChain()
         predictions = []
         englishRun = false
@@ -215,12 +256,14 @@ public final class KeyboardSession {
 
     /// A tap on the row at [index], whatever it lists now.
     public func tapItem(_ index: Int) {
+        settle()
         if let current = fix {
             pickFix(current, index)
         } else if isComposing {
             select(index, byHand: true)
         } else if let prediction = predictions[safe: index] {
             target?.commitText(prediction.text)
+            expanded = false
             learner.onPredictionPicked(prediction)
             predictions = learner.predictions(limit: Self.maxPredictions)
             changed()
@@ -229,6 +272,7 @@ public final class KeyboardSession {
 
     /// A long press forgets what was learned about this candidate; dictionary words stay.
     public func longPressItem(_ index: Int) {
+        settle()
         guard fix == nil else { return }
         if isComposing, let word = candidates[safe: index], word.id == PinyinEngine.englishId {
             if english?.forget(word.text) == true {
@@ -256,12 +300,14 @@ public final class KeyboardSession {
     }
 
     public func toggleExpanded() {
+        settle()
         expanded.toggle()
         changed()
     }
 
     /// The 改词 button, which also reads 取消 and 完成.
     public func tapFix() {
+        settle()
         if editCaret != nil {
             editCaret = nil
         } else if fix == nil {
@@ -274,6 +320,7 @@ public final class KeyboardSession {
     }
 
     public func editPinyin() {
+        settle()
         guard isComposing else { return }
         fix = nil
         expanded = false
@@ -331,11 +378,13 @@ public final class KeyboardSession {
         return String(letters)
     }
 
-    private func update(_ text: String) {
+    private func update(_ text: String, tap: [Float]? = nil, sample: TypingLearner.Sample? = nil) {
+        taps.follow(composing, text, tap: tap, token: sample)
         fix = nil
         fixedSentence = nil
         expanded = false
         if composing.isEmpty || text.isEmpty { editCaret = nil }
+        if composing.isEmpty || text.isEmpty { settle() }
         if composing.isEmpty {
             let before = target?.textBeforeCaret ?? ""
             fieldContext = lexicon.contextBefore(String(before.suffix(Self.contextCharacters)))
@@ -346,21 +395,79 @@ public final class KeyboardSession {
             candidates = []
             target?.setMarkedText("")
         } else {
-            let found = engine.candidates(text, before: learner.context ?? fieldContext)
-            candidates = english?.merge(text, found, whole: PinyinEngine.isWholePinyin(text, lexicon)) ?? found
             target?.setMarkedText(text)
+            predictions = []
+            nextJob += 1
+            let job = Job(id: nextJob, text: text, before: learner.context ?? fieldContext, taps: taps.snapshot)
+            if decoding == nil {
+                let found = engine.candidates(text, before: job.before, taps: job.taps)
+                show(found, whole: PinyinEngine.isWholePinyin(text, lexicon))
+                changed()
+                return
+            }
+            waiting = job
+            if running == nil { start(job) }
+            return
         }
         predictions = []
         changed()
     }
 
+    private func start(_ job: Job) {
+        running = job.id
+        decoding?.async { [self] in
+            let found = engine.candidates(job.text, before: job.before, taps: job.taps)
+            let whole = PinyinEngine.isWholePinyin(job.text, lexicon)
+            decoded = (job.id, found, whole)
+            DispatchQueue.main.async { [self] in finished(job.id, found, whole) }
+        }
+    }
+
+    private func finished(_ id: Int, _ found: [PinyinEngine.Candidate], _ whole: Bool) {
+        guard running == id else { return }
+        running = nil
+        guard let job = waiting else { return }
+        if job.id == id {
+            waiting = nil
+            show(found, whole: whole)
+            changed()
+        } else {
+            start(job)
+        }
+    }
+
+    private func show(_ found: [PinyinEngine.Candidate], whole: Bool) {
+        candidates = english?.merge(composing, found, whole: whole) ?? found
+    }
+
+    /// Waits for the engine and brings the candidates up to the letters typed, so what follows
+    /// sees the right ones and has the engine, lexicon and learner to itself.
+    public func settle() {
+        if running != nil { decoding?.sync {} }
+        running = nil
+        guard let job = waiting else { return }
+        waiting = nil
+        if let done = decoded, done.id == job.id {
+            show(done.found, whole: done.whole)
+        } else {
+            show(engine.candidates(job.text, before: job.before, taps: job.taps), whole: PinyinEngine.isWholePinyin(job.text, lexicon))
+        }
+    }
+
     private func select(_ index: Int, byHand: Bool) {
+        settle()
         guard let candidate = candidates[safe: index] else { return }
         let learnedByHand = byHand || candidate.text == fixedSentence?.text
         fix = nil
         editCaret = nil
         expanded = false
         let letters = Array(composing)
+        // A reading that took a tap as another key teaches the touch model that key (wl → wo).
+        if let spelling = candidate.spelling {
+            for (at, letter) in PinyinTapBuffer.substitutions(String(letters.prefix(candidate.consumed)), spelling) {
+                if let sample = taps.token(at: at) { touchLearner?.correct(sample, Int(letter) - 97) }
+            }
+        }
         var rest = letters.dropFirst(min(candidate.consumed, letters.count))
         while rest.first == "'" { rest = rest.dropFirst() }
         let isEnglish = candidate.id == PinyinEngine.englishId
@@ -377,6 +484,7 @@ public final class KeyboardSession {
         }
         if rest.isEmpty {
             learner.onCompositionDone()
+            taps.follow(composing, "", tap: nil, token: nil)
             composing = ""
             candidates = []
             predictions = learner.predictions(limit: Self.maxPredictions)
@@ -390,6 +498,7 @@ public final class KeyboardSession {
         var guardCount = composing.count
         while isComposing, guardCount > 0 {
             guardCount -= 1
+            settle()
             if candidates.isEmpty {
                 commitRaw()
                 return
@@ -399,9 +508,11 @@ public final class KeyboardSession {
     }
 
     private func commitRaw() {
+        settle()
         guard isComposing else { return }
         target?.commitText(composing.replacingOccurrences(of: "'", with: ""))
         learner.onCompositionAbandoned()
+        taps.follow(composing, "", tap: nil, token: nil)
         composing = ""
         candidates = []
         predictions = []
