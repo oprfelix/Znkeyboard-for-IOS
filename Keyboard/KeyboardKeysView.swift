@@ -1,5 +1,6 @@
 import AudioToolbox
 import PinyinCore
+import QuartzCore
 import UIKit
 
 /// The keys, drawn as plain views; a touch goes to the nearest key, so there are no dead gaps.
@@ -41,6 +42,7 @@ final class KeyboardKeysView: UIView {
     private static let numberRowHeight: CGFloat = 44
     private static let rowGap: CGFloat = 11
     private static let hitOverhang: CGFloat = 4
+    private static let fastDisplaySeconds: CFTimeInterval = 3
     private static let topInset: CGFloat = 4
     private static let bottomInset: CGFloat = 2
     private static let gap: CGFloat = 6
@@ -80,6 +82,8 @@ final class KeyboardKeysView: UIView {
     private var chinese = true
     private var repeatTimer: Timer?
     private var presses: [Press] = []
+    private var fastUntil: CFTimeInterval = 0
+    private var displayLink: CADisplayLink?
     private var letterCells = [KeyCell?](repeating: nil, count: 26)
     private var geometry: KeyGeometry?
 
@@ -322,7 +326,31 @@ final class KeyboardKeysView: UIView {
         return dx * dx + dy * dy
     }
 
+    /// ProMotion rests at a low rate on a still screen, and touches and drawing wait for its next
+    /// frame. A running link holds it at full speed while typing, and stops soon after.
+    private func keepDisplayFast() {
+        fastUntil = CACurrentMediaTime() + Self.fastDisplaySeconds
+        displayLink?.isPaused = false
+    }
+
+    @objc private func displayTick() {
+        if CACurrentMediaTime() > fastUntil { displayLink?.isPaused = true }
+    }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        displayLink?.invalidate()
+        displayLink = nil
+        guard window != nil else { return }
+        let link = CADisplayLink(target: self, selector: #selector(displayTick))
+        link.preferredFrameRateRange = CAFrameRateRange(minimum: 80, maximum: 120, preferred: 120)
+        link.add(to: .main, forMode: .common)
+        displayLink = link
+        keepDisplayFast()
+    }
+
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+        keepDisplayFast()
         for touch in touches.sorted(by: { $0.timestamp < $1.timestamp }) {
             layoutIfNeeded()
             let point = touch.location(in: self)

@@ -11,7 +11,7 @@ final class ReadingCardView: UIView {
     private let action = UIButton(type: .system)
     private let loading = UIActivityIndicatorView(style: .medium)
     private var bodyHeight: NSLayoutConstraint!
-    private static let topInset: CGFloat = 0
+    private static let topInset: CGFloat = 8
     private static let headerHeight: CGFloat = 30
     private static let sideInset: CGFloat = 16
 

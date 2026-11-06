@@ -120,6 +120,15 @@ final class CandidateBarView: UIView, UIScrollViewDelegate {
         placeItems()
     }
 
+    func clearLabel() { label.text = "" }
+
+    /// The letter shows at once; the candidates follow when the engine has them.
+    func appendToLabel(_ character: Character) {
+        tools.isHidden = true
+        label.isHidden = false
+        label.text = (label.text ?? "") + String(character)
+    }
+
     /// The small pinyin line sits over the candidates' column: a tap there picks the one below.
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
         if !scroller.isHidden, point.y < scroller.frame.minY, point.x < scroller.frame.maxX, self.point(inside: point, with: event) {

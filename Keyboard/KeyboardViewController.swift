@@ -192,7 +192,12 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
         hasNewCopy = false
         for character in text {
             typing.learner.onCommitted(character, sample)
+            let wasComposing = session.composing
             session.type(character, tap: tap, sample: sample)
+            if session.editCaret == nil, session.composing == wasComposing + String(character) {
+                if wasComposing.isEmpty { bar.clearLabel() }
+                bar.appendToLabel(character)
+            }
         }
         afterKey(session)
     }
