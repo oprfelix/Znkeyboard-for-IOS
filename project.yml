@@ -1,0 +1,52 @@
+name: ZnKeyboard
+options:
+  bundleIdPrefix: com.oprfelix
+  deploymentTarget:
+    iOS: "16.0"
+  createIntermediateGroups: true
+packages:
+  ZnKeyboardCore:
+    path: .
+settings:
+  base:
+    DEVELOPMENT_TEAM: 6DSHU7W7LQ
+    CODE_SIGN_STYLE: Automatic
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    SWIFT_VERSION: "5.0"
+    TARGETED_DEVICE_FAMILY: "1"
+targets:
+  ZnKeyboard:
+    type: application
+    platform: iOS
+    sources: [App]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.oprfelix.znkeyboard
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: ZnKeyboard
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait
+    dependencies:
+      - target: ZnKeyboardExtension
+        embed: true
+  ZnKeyboardExtension:
+    type: app-extension
+    platform: iOS
+    sources:
+      - Keyboard
+      - path: Sources/PinyinCore/Resources/dict.bin
+        buildPhase: resources
+      - path: Sources/PinyinCore/Resources/lm.bin
+        buildPhase: resources
+      - path: Sources/PinyinCore/Resources/english.txt
+        buildPhase: resources
+    settings:
+      base:
+        PRODUCT_NAME: ZnKeyboardExtension
+        PRODUCT_BUNDLE_IDENTIFIER: com.oprfelix.znkeyboard.keyboard
+        INFOPLIST_FILE: Keyboard/Info.plist
+        GENERATE_INFOPLIST_FILE: NO
+    dependencies:
+      - package: ZnKeyboardCore
+        product: PinyinCore
