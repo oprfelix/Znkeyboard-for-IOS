@@ -5,14 +5,7 @@
 	<key>CFBundleDevelopmentRegion</key><string>zh-Hans</string>
 	<key>CFBundleDisplayName</key><string>ZnKeyboard</string>
 	<key>CFBundleExecutable</key><string>$(EXECUTABLE_NAME)</string>
-	<key>CFBundleIcons</key>
-	<dict>
-		<key>CFBundlePrimaryIcon</key>
-		<dict>
-			<key>CFBundleIconFiles</key>
-			<array><string>AppIcon60x60</string></array>
-		</dict>
-	</dict>
+	<key>CFBundleIconName</key><string>AppIcon</string>
 	<key>CFBundleIdentifier</key><string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
 	<key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
 	<key>CFBundleName</key><string>$(PRODUCT_NAME)</string>
@@ -20,6 +13,7 @@
 	<key>CFBundleShortVersionString</key><string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key><string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>CADisableMinimumFrameDurationOnPhone</key><true/>
+	<key>ITSAppUsesNonExemptEncryption</key><false/>
 	<key>LSRequiresIPhoneOS</key><true/>
 	<key>UIApplicationSceneManifest</key>
 	<dict><key>UIApplicationSupportsMultipleScenes</key><false/></dict>

@@ -73,6 +73,24 @@ public enum SharedSettings {
         set { defaults.set(newValue, forKey: "adaptiveTouch") }
     }
 
+    /// Who the text goes to: the custom service's address, as a changed one needs a new yes.
+    public static var aiRecipient: String { providerKind.fixedBaseURL == nil ? customBaseURL : providerKind.rawValue }
+
+    /// The recipient as the user reads it.
+    public static var aiRecipientName: String {
+        guard providerKind.fixedBaseURL == nil else { return providerKind.label }
+        return URL(string: customBaseURL)?.host ?? customBaseURL
+    }
+
+    /// Whether the user agreed to send text to the service now chosen.
+    public static var hasAIConsent: Bool {
+        (defaults.stringArray(forKey: "aiConsent") ?? []).contains(aiRecipient)
+    }
+
+    public static func grantAIConsent() {
+        defaults.set((defaults.stringArray(forKey: "aiConsent") ?? []) + [aiRecipient], forKey: "aiConsent")
+    }
+
     public static var numberRow: Bool {
         get { flag("numberRow", default: false) }
         set { defaults.set(newValue, forKey: "numberRow") }

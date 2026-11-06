@@ -11,7 +11,7 @@ settings:
   base:
     DEVELOPMENT_TEAM: 6DSHU7W7LQ
     CODE_SIGN_STYLE: Automatic
-    MARKETING_VERSION: "0.1.0"
+    MARKETING_VERSION: "1.0"
     CURRENT_PROJECT_VERSION: "1"
     SWIFT_VERSION: "5.0"
     TARGETED_DEVICE_FAMILY: "1"
@@ -22,13 +22,14 @@ targets:
     sources:
       - path: App
         excludes:
-          - Assets.xcassets
           - Info.plist
           - App.entitlements
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.oprfelix.znkeyboard
         INFOPLIST_FILE: App/Info.plist
+        TARGETED_DEVICE_FAMILY: "1"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         GENERATE_INFOPLIST_FILE: NO
         CODE_SIGN_ENTITLEMENTS: App/App.entitlements
     dependencies:

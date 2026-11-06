@@ -218,12 +218,11 @@ struct SetupView: View {
     @State private var numberRow = SharedSettings.numberRow
     @State private var adaptiveTouch = SharedSettings.adaptiveTouch
     @State private var models: [String] = []
-    @State private var keyboardAdded = false
     @State private var fullAccess = false
     @State private var trying = false
     @Environment(\.scenePhase) private var scenePhase
 
-    private var isReady: Bool { keyboardAdded && fullAccess }
+    private var isReady: Bool { fullAccess }
 
     /// The saved model stays listed even when the provider didn't name it.
     private var modelChoices: [String] {
@@ -241,10 +240,13 @@ struct SetupView: View {
                 fuzzy
                 feel
                 ai
-                Label("文字从手机直接发给你选的服务商，没有中转服务器", systemImage: "lock.shield")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .padding(.vertical, 8)
+                VStack(spacing: 8) {
+                    Label("文字从手机直接发给你选的服务商，没有中转服务器", systemImage: "lock.shield")
+                        .foregroundStyle(.secondary)
+                    Link("隐私政策", destination: URL(string: "https://znkeyboard.2amz.com/privacy")!)
+                }
+                .font(.footnote)
+                .padding(.vertical, 8)
             }
             .padding(.horizontal, 16)
             // Room to lift the box above the keyboard, whatever height it has.
@@ -275,11 +277,8 @@ struct SetupView: View {
         .task(id: "\(kind.rawValue)\(apiKey)\(baseURL)") { await loadModels() }
     }
 
-    /// Whether the keyboard is added, and whether it has reported full access.
+    /// The keyboard reports full access once it has it; iOS lets no app ask whether it is added.
     private func refresh() {
-        keyboardAdded = UITextInputMode.activeInputModes.contains {
-            ($0.value(forKey: "identifier") as? String)?.hasPrefix("com.oprfelix.znkeyboard") == true
-        }
         fullAccess = SharedSettings.keyboardHasFullAccess
     }
 
@@ -329,10 +328,8 @@ struct SetupView: View {
         } else {
             Card(title: "启用键盘", symbol: "keyboard") {
                 VStack(alignment: .leading, spacing: 14) {
-                    if !keyboardAdded {
-                        Step(number: 1, title: "添加键盘", detail: "设置 → 通用 → 键盘 → 键盘 → 添加新键盘，只选 ZnKeyboard")
-                    }
-                    Step(number: keyboardAdded ? 1 : 2, title: "允许完全访问", detail: "润色和翻译要联网，复制翻译要读取剪贴板。打开后，切到 ZnKeyboard 打一个字")
+                    Step(number: 1, title: "添加键盘", detail: "设置 → 通用 → 键盘 → 键盘 → 添加新键盘，只选 ZnKeyboard")
+                    Step(number: 2, title: "允许完全访问", detail: "润色和翻译要联网，复制翻译要读取剪贴板。打开后，切到 ZnKeyboard 打一个字")
                 }
                 Button(action: openSettings) {
                     Text("打开系统设置").font(.subheadline.weight(.semibold)).frame(maxWidth: .infinity, minHeight: 44)

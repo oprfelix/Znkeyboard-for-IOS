@@ -6,6 +6,7 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
     private let keys = KeyboardKeysView()
     private let grid = CandidateGridView()
     private let typing = AdaptiveTyping()
+    private var afterConsent: (() -> Void)?
     private let bar = CandidateBarView()
     private var session: KeyboardSession?
     private var heightConstraint: NSLayoutConstraint?
@@ -61,7 +62,7 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
         card.isHidden = true
         card.clipsToBounds = true
         card.onClose = { [weak self] in self?.closeCard() }
-        card.onAction = { [weak self] in self?.applyReplacement() }
+        card.onAction = { [weak self] in self?.cardAction() }
         bar.onPolish = { [weak self] in self?.rewrite(translating: false) }
         bar.onTranslate = { [weak self] in self?.rewrite(translating: true) }
         bar.onOffer = { [weak self] in self?.readCopied() }
@@ -268,13 +269,35 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
         render()
     }
 
-    private func canUseAI() -> Bool {
+    private func cardAction() {
+        guard let retry = afterConsent else {
+            applyReplacement()
+            return
+        }
+        SharedSettings.grantAIConsent()
+        closeCard()
+        retry()
+    }
+
+    /// Nothing goes to an AI service before the user has said yes to that service.
+    private func canUseAI(then retry: @escaping () -> Void) -> Bool {
         guard hasFullAccess else {
             showCardMessage("请在「设置 → 通用 → 键盘 → 键盘 → ZnKeyboard」打开「允许完全访问」。")
             return false
         }
         guard SharedSettings.provider.isConfigured else {
             showCardMessage("请打开 ZnKeyboard App，填写 API Key。")
+            return false
+        }
+        guard SharedSettings.hasAIConsent else {
+            replacement = nil
+            afterConsent = retry
+            card.showResult(
+                title: "发送前请确认",
+                body: "润色和翻译会把你选中的文字发给 \(SharedSettings.aiRecipientName)，由它按自己的隐私政策处理。文字不经过 ZnKeyboard 的服务器。同意后，用这个服务时不再询问。",
+                actionTitle: "同意"
+            )
+            showCard()
             return false
         }
         return true
@@ -308,6 +331,7 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
     }
 
     private func closeCard() {
+        afterConsent = nil
         request?.cancel()
         replacement = nil
         card.isHidden = true
@@ -319,7 +343,7 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
     private func readCopied() {
         hasNewCopy = false
         render()
-        guard canUseAI() else { return }
+        guard canUseAI(then: { [weak self] in self?.readCopied() }) else { return }
         guard let text = UIPasteboard.general.string?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else {
             showCardMessage("没有读到复制的内容。可在「设置 → App → ZnKeyboard → 从其他 App 粘贴」选「允许」，以后就不用每次确认。")
             return
@@ -336,7 +360,7 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
 
     /// Polishes or translates the selection, or else all the text the field shows around the caret.
     private func rewrite(translating: Bool) {
-        guard canUseAI() else { return }
+        guard canUseAI(then: { [weak self] in self?.rewrite(translating: translating) }) else { return }
         let proxy = textDocumentProxy
         let selected = proxy.selectedText ?? ""
         let text = selected.isEmpty ? (proxy.documentContextBeforeInput ?? "") + (proxy.documentContextAfterInput ?? "") : selected
