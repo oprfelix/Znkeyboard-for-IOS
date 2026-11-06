@@ -1,3 +1,4 @@
+import AudioToolbox
 import UIKit
 
 /// The keys, drawn as plain views; a touch goes to the nearest key, so there are no dead gaps.
@@ -14,13 +15,32 @@ final class KeyboardKeysView: UIView {
         var action: Action = .key(.space)
     }
 
-    static let rowHeight: CGFloat = 52
+    // A row of letters measures what the system keyboard's does; the number row is shorter.
+    private static let rowHeight: CGFloat = 54
+    private static let numberRowHeight: CGFloat = 44
+    private static let rowGap: CGFloat = 11
+    private static let topInset: CGFloat = 4
+    private static let bottomInset: CGFloat = 2
     private static let gap: CGFloat = 6
+    private static let letterKey = UIColor { $0.userInterfaceStyle == .dark ? UIColor(white: 0.42, alpha: 1) : .white }
+    private static let functionKey = UIColor { traits in
+        traits.userInterfaceStyle == .dark ? UIColor(white: 0.28, alpha: 1) : UIColor(red: 0.68, green: 0.70, blue: 0.74, alpha: 1)
+    }
 
     var onKey: ((Key) -> Void)?
     var onGlobe: ((UIView, UIEvent) -> Void)?
+    /// Haptics need full access; without it the generator does nothing.
+    var haptics: UIImpactFeedbackGenerator?
     var showsGlobe = true { didSet { if showsGlobe != oldValue { rebuild() } } }
+    var showsNumberRow = false { didSet { if showsNumberRow != oldValue { rebuild() } } }
+    var showsPopup = true
+    var playsSound = false
+    /// How many rows of keys there are now.
+    var preferredHeight: CGFloat {
+        4 * Self.rowHeight + (showsNumberRow ? Self.numberRowHeight : 0) + Self.topInset + Self.bottomInset - Self.rowGap
+    }
 
+    private let popup = UILabel()
     private var cells: [KeyCell] = []
     private var rows: [[(cell: KeyCell, weight: CGFloat)]] = []
     private var shifted = false
@@ -31,11 +51,30 @@ final class KeyboardKeysView: UIView {
     override init(frame: CGRect) {
         super.init(frame: frame)
         isMultipleTouchEnabled = true
+        popup.textAlignment = .center
+        popup.font = .systemFont(ofSize: 30)
+        popup.layer.cornerRadius = 8
+        popup.layer.masksToBounds = true
+        popup.isHidden = true
+        addSubview(popup)
         rebuild()
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("no storyboards") }
+
+    override func traitCollectionDidChange(_ previous: UITraitCollection?) {
+        super.traitCollectionDidChange(previous)
+        if previous?.userInterfaceStyle != traitCollection.userInterfaceStyle { rebuild() }
+    }
+
+    /// One-shot capitals, for the start of an English sentence.
+    func setShifted(_ value: Bool) {
+        if shifted != value {
+            shifted = value
+            rebuild()
+        }
+    }
 
     func setChinese(_ value: Bool) {
         if chinese != value {
@@ -62,7 +101,8 @@ final class KeyboardKeysView: UIView {
                 [("返回", .symbols, 1.5)] + ".,?!'".map { (String($0), .key(.text(String($0))), 1.2) } + [("⌫", .key(.backspace), 1.5)],
             ]
         } else {
-            layout = [
+            layout = showsNumberRow ? ["1234567890".map { (String($0), .key(.text(String($0))), 1) }] : []
+            layout += [
                 letters("qwertyuiop"),
                 letters("asdfghjkl"),
                 [("⇧", .shift, 1.4)] + letters("zxcvbnm") + [("⌫", .key(.backspace), 1.4)],
@@ -77,16 +117,19 @@ final class KeyboardKeysView: UIView {
                 let cell = KeyCell()
                 cell.text = title
                 cell.textAlignment = .center
-                cell.font = .systemFont(ofSize: title.count == 1 ? 21 : 15)
+                cell.font = .systemFont(ofSize: title.count == 1 && title.first?.isASCII == true ? 25 : 16)
                 cell.textColor = .label
-                cell.layer.cornerRadius = 7
-                cell.layer.masksToBounds = true
-                if case .key(.text) = action {
-                    cell.backgroundColor = .tertiarySystemFill
-                } else if case .key(.space) = action {
-                    cell.backgroundColor = .tertiarySystemFill
-                } else {
-                    cell.backgroundColor = .quaternarySystemFill
+                cell.layer.cornerRadius = 8
+                // A thin shadow under each key, as on the system keyboard.
+                cell.layer.shadowColor = UIColor.black.cgColor
+                cell.layer.shadowOpacity = 0.3
+                cell.layer.shadowRadius = 0
+                cell.layer.shadowOffset = CGSize(width: 0, height: 1)
+                switch action {
+                case .key(.text), .key(.space):
+                    cell.layer.backgroundColor = Self.letterKey.resolvedColor(with: traitCollection).cgColor
+                default:
+                    cell.layer.backgroundColor = Self.functionKey.resolvedColor(with: traitCollection).cgColor
                 }
                 cell.action = action
                 addSubview(cell)
@@ -99,8 +142,13 @@ final class KeyboardKeysView: UIView {
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        let rowHeight = (bounds.height - 8) / CGFloat(max(rows.count, 1))
+        // Only the letter keyboard has the fifth row; the others share its full height.
+        let numberRow = rows.count == 5 ? Self.numberRowHeight : 0
+        let fullRows = CGFloat(max(rows.count - (numberRow > 0 ? 1 : 0), 1))
+        let rowHeight = (bounds.height - Self.topInset - Self.bottomInset + Self.rowGap - numberRow) / fullRows
+        var y = Self.topInset
         for (r, row) in rows.enumerated() {
+            let height = r == 0 && numberRow > 0 ? numberRow : rowHeight
             let total = row.reduce(CGFloat(0)) { $0 + $1.weight }
             // The second row is narrower on the letter keyboard, centred under the first.
             let unit = (bounds.width - Self.gap) / (rows.first.map { $0.reduce(CGFloat(0)) { $0 + $1.weight } } ?? total)
@@ -110,9 +158,10 @@ final class KeyboardKeysView: UIView {
             let scale = total * width > bounds.width ? (bounds.width - Self.gap) / (total * width) : 1
             for (cell, weight) in row {
                 let w = weight * width * scale
-                cell.frame = CGRect(x: x + Self.gap / 2, y: CGFloat(r) * rowHeight + 5, width: w - Self.gap, height: rowHeight - 8)
+                cell.frame = CGRect(x: x + Self.gap / 2, y: y, width: w - Self.gap, height: height - Self.rowGap)
                 x += w
             }
+            y += height
         }
     }
 
@@ -130,6 +179,10 @@ final class KeyboardKeysView: UIView {
         for touch in touches {
             guard let cell = cell(at: touch.location(in: self)) else { continue }
             UIView.performWithoutAnimation { cell.alpha = 0.55 }
+            haptics?.impactOccurred()
+            haptics?.prepare()
+            if playsSound { AudioServicesPlaySystemSound(1104) }
+            showPopup(over: cell)
             if case .key(.backspace) = cell.action {
                 onKey?(.backspace)
                 repeatTimer?.invalidate()
@@ -140,7 +193,17 @@ final class KeyboardKeysView: UIView {
         }
     }
 
+    private func showPopup(over cell: KeyCell) {
+        guard showsPopup, case .key(.text) = cell.action, let text = cell.text else { return }
+        popup.text = text
+        popup.backgroundColor = Self.letterKey
+        popup.frame = CGRect(x: cell.frame.minX - 4, y: cell.frame.minY - cell.frame.height - 8, width: cell.frame.width + 8, height: cell.frame.height + 4)
+        popup.isHidden = false
+        bringSubviewToFront(popup)
+    }
+
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
+        popup.isHidden = true
         repeatTimer?.invalidate()
         cells.forEach { $0.alpha = 1 }
         for touch in touches {
@@ -167,6 +230,7 @@ final class KeyboardKeysView: UIView {
     }
 
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
+        popup.isHidden = true
         repeatTimer?.invalidate()
         cells.forEach { $0.alpha = 1 }
     }

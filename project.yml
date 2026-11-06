@@ -19,17 +19,23 @@ targets:
   ZnKeyboard:
     type: application
     platform: iOS
-    sources: [App]
+    sources:
+      - path: App
+        excludes:
+          - Assets.xcassets
+          - Info.plist
+          - App.entitlements
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.oprfelix.znkeyboard
-        GENERATE_INFOPLIST_FILE: YES
-        INFOPLIST_KEY_CFBundleDisplayName: ZnKeyboard
-        INFOPLIST_KEY_UILaunchScreen_Generation: YES
-        INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait
+        INFOPLIST_FILE: App/Info.plist
+        GENERATE_INFOPLIST_FILE: NO
+        CODE_SIGN_ENTITLEMENTS: App/App.entitlements
     dependencies:
       - target: ZnKeyboardExtension
         embed: true
+      - package: ZnKeyboardCore
+        product: PinyinCore
   ZnKeyboardExtension:
     type: app-extension
     platform: iOS
@@ -47,6 +53,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.oprfelix.znkeyboard.keyboard
         INFOPLIST_FILE: Keyboard/Info.plist
         GENERATE_INFOPLIST_FILE: NO
+        CODE_SIGN_ENTITLEMENTS: Keyboard/Keyboard.entitlements
     dependencies:
       - package: ZnKeyboardCore
         product: PinyinCore

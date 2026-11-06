@@ -78,6 +78,9 @@ func aiChecks() async {
     do { _ = try await client.polish("x", with: AIProvider(baseURL: "http://x.test", model: "m", apiKey: "k")); check("http refused", false) } catch {
         check("http refused", (error as? AIError) == .badAddress)
     }
+    StubProtocol.replies = [(200, "{\"data\":[{\"id\":\"models/gemini-x\"},{\"id\":\"text-embedding-1\"},{\"id\":\"deepseek-flash\"}]}")]
+    let listed = (try? await client.models(provider)) ?? []
+    check("model list drops the unusable", listed == ["deepseek-flash", "gemini-x"], listed)
     check("worth reading", AIClient.isWorthReading("Hello there", target: TranslateLanguage.all[1]))
     check("Chinese not offered", !AIClient.isWorthReading("你好世界", target: TranslateLanguage.all[1]))
     check("links not offered", !AIClient.isWorthReading("https://a.com/1", target: TranslateLanguage.all[1]))
@@ -152,6 +155,16 @@ final class FakeField: TextTarget {
     func setMarkedText(_ text: String) { marked = text }
     func commitText(_ text: String) { marked = ""; self.text += text }
     func deleteBackward() { if !text.isEmpty { text.removeLast() } }
+}
+
+func fuzzyChecks(_ args: [String]) {
+    guard let dict = MappedDictionary(path: args[1]), let model = LanguageModel(path: args[2]) else { fatalError("load") }
+    let strict = PinyinEngine(lexicon: PinyinLexicon(dictionary: dict, model: model, fuzzy: []))
+    let loose = PinyinEngine(lexicon: PinyinLexicon(dictionary: dict, model: model, fuzzy: .all))
+    let plain = strict.candidates("shang").prefix(20).map(\.text)
+    let folded = loose.candidates("san").prefix(20).map(\.text)
+    check("fuzzy on finds 上 for san", folded.contains("上"), folded)
+    check("fuzzy off keeps san apart", !strict.candidates("san").prefix(20).map(\.text).contains("上") && plain.contains("上"))
 }
 
 func sessionChecks(_ args: [String]) {
@@ -244,6 +257,10 @@ func sessionChecks(_ args: [String]) {
     check("a dot after digits stays a dot", field.text == "123.", field.text)
     reset()
 
+    typed("ni"); session.space(); session.space(); session.space()
+    check("two spaces make a full stop", field.text.hasSuffix("。"), field.text)
+    reset()
+
     typed("xi'an")
     check("separator kept", session.composing == "xi'an" && session.candidates.first?.text == "西安", session.candidates.first?.text as Any)
     session.space()
@@ -270,5 +287,6 @@ let arguments = CommandLine.arguments
 await aiChecks()
 learningChecks(arguments)
 sessionChecks(arguments)
+fuzzyChecks(arguments)
 print(failures == 0 ? "all passed" : "\(failures) failed")
 exit(failures == 0 ? 0 : 1)

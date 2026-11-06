@@ -91,6 +91,30 @@ public final class AIClient {
         try await request(system: Prompts.rewrite, text: text, provider: provider)
     }
 
+    /// The models the provider offers, best known names first; empty when it won't say.
+    public func models(_ provider: AIProvider) async throws -> [String] {
+        guard !provider.apiKey.isEmpty else { return [] }
+        var base = provider.baseURL.trimmingCharacters(in: .whitespaces)
+        while base.hasSuffix("/") { base.removeLast() }
+        guard let url = URL(string: base + "/models"), url.scheme == "https" else { throw AIError.badAddress }
+        var request = URLRequest(url: url, timeoutInterval: 20)
+        request.setValue("Bearer \(provider.apiKey)", forHTTPHeaderField: "Authorization")
+        let (data, response) = try await session.data(for: request)
+        let code = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard (200...299).contains(code) else { throw AIError.http(code, "") }
+        return Self.parseModels(data)
+    }
+
+    static func parseModels(_ data: Data) -> [String] {
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let items = root["data"] as? [[String: Any]] else { return [] }
+        let excluded = ["embedding", "vision", "image", "audio", "tts", "aqa", "imagen", "veo"]
+        return items.compactMap { $0["id"] as? String }
+            .map { $0.hasPrefix("models/") ? String($0.dropFirst(7)) : $0 }
+            .filter { id in !excluded.contains { id.lowercased().contains($0) } }
+            .sorted()
+    }
+
     /// Polishes [text] and writes it in [language], to send to someone.
     public func translate(_ text: String, to language: TranslateLanguage, with provider: AIProvider) async throws -> String {
         let system = Prompts.rewrite + "\n\n---\n\n" + Prompts.translate.replacingOccurrences(of: "{language}", with: language.name)

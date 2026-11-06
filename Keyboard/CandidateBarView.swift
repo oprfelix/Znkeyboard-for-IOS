@@ -4,12 +4,21 @@ import UIKit
 final class CandidateBarView: UIView {
     var onTap: ((Int) -> Void)?
     var onFix: (() -> Void)?
+    var onPolish: (() -> Void)?
+    var onTranslate: (() -> Void)?
+    var onOffer: (() -> Void)?
+    var onDismissOffer: (() -> Void)?
 
     private let label = UILabel()
     private let scroller = UIScrollView()
     private let row = UIStackView()
     private let fix = UIButton(type: .system)
     private var buttons: [UIButton] = []
+    private let tools = UIStackView()
+    private let polish = UIButton(type: .system)
+    private let translate = UIButton(type: .system)
+    private let offer = UIButton(type: .system)
+    private let offerClose = UIButton(type: .system)
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -27,6 +36,39 @@ final class CandidateBarView: UIView {
             item.translatesAutoresizingMaskIntoConstraints = false
             addSubview(item)
         }
+        for (button, title) in [(polish, "润色"), (translate, "翻译")] {
+            button.setTitle(title, for: .normal)
+            styleTool(button)
+        }
+        polish.addTarget(self, action: #selector(polishTapped), for: .touchUpInside)
+        translate.addTarget(self, action: #selector(translateTapped), for: .touchUpInside)
+        styleTool(offer)
+        offer.contentHorizontalAlignment = .leading
+        offer.titleLabel?.lineBreakMode = .byTruncatingTail
+        offer.addTarget(self, action: #selector(offerTapped), for: .touchUpInside)
+        offerClose.setTitle("✕", for: .normal)
+        styleTool(offerClose)
+        offerClose.addTarget(self, action: #selector(offerCloseTapped), for: .touchUpInside)
+        tools.axis = .horizontal
+        tools.spacing = 8
+        tools.alignment = .center
+        tools.isHidden = true
+        tools.translatesAutoresizingMaskIntoConstraints = false
+        let spacer = UIView()
+        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        for item in [polish, translate, offer, offerClose, spacer] as [UIView] { tools.addArrangedSubview(item) }
+        addSubview(tools)
+        NSLayoutConstraint.activate([
+            tools.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+            tools.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            tools.centerYAnchor.constraint(equalTo: centerYAnchor),
+            tools.heightAnchor.constraint(equalToConstant: 34),
+            polish.heightAnchor.constraint(equalToConstant: 34),
+            translate.heightAnchor.constraint(equalToConstant: 34),
+            offer.heightAnchor.constraint(equalToConstant: 34),
+            offerClose.heightAnchor.constraint(equalToConstant: 34),
+            offerClose.widthAnchor.constraint(equalToConstant: 40),
+        ])
         row.translatesAutoresizingMaskIntoConstraints = false
         scroller.addSubview(row)
         NSLayoutConstraint.activate([
@@ -52,6 +94,9 @@ final class CandidateBarView: UIView {
     required init?(coder: NSCoder) { fatalError("no storyboards") }
 
     func show(label text: String, items: [String], fixTitle: String?) {
+        tools.isHidden = true
+        label.isHidden = false
+        scroller.isHidden = false
         label.text = text
         fix.setTitle(fixTitle, for: .normal)
         fix.isHidden = fixTitle == nil
@@ -80,6 +125,32 @@ final class CandidateBarView: UIView {
         scroller.setContentOffset(CGPoint(x: offset, y: 0), animated: false)
     }
 
+    /// The toolbar when nothing is being typed; [offering] asks whether to translate what was copied.
+    func showTools(languageName: String, offering: Bool) {
+        label.isHidden = true
+        scroller.isHidden = true
+        fix.isHidden = true
+        tools.isHidden = false
+        translate.setTitle("翻译为\(languageName)", for: .normal)
+        polish.isHidden = offering
+        translate.isHidden = offering
+        offer.isHidden = !offering
+        offerClose.isHidden = !offering
+        offer.setTitle("翻译复制的内容", for: .normal)
+    }
+
+    private func styleTool(_ button: UIButton) {
+        button.titleLabel?.font = .systemFont(ofSize: 14)
+        button.setTitleColor(.label, for: .normal)
+        button.backgroundColor = UIColor { $0.userInterfaceStyle == .dark ? UIColor(white: 0.42, alpha: 1) : .white }
+        button.layer.cornerRadius = 10
+        button.contentEdgeInsets = UIEdgeInsets(top: 0, left: 12, bottom: 0, right: 12)
+    }
+
+    @objc private func polishTapped() { onPolish?() }
+    @objc private func translateTapped() { onTranslate?() }
+    @objc private func offerTapped() { onOffer?() }
+    @objc private func offerCloseTapped() { onDismissOffer?() }
     @objc private func itemTapped(_ sender: UIButton) { onTap?(sender.tag) }
     @objc private func fixTapped() { onFix?() }
 

@@ -23,6 +23,7 @@ public final class KeyboardSession {
 
     public static let hintDuration: TimeInterval = 2.5
     private static let maxPredictions = 16
+    private static let doubleSpaceWindow: TimeInterval = 0.7
     private static let contextCharacters = 16
     private static let punctuation: [Character: String] = [
         ",": "，", ".": "。", "?": "？", "!": "！", ":": "：", ";": "；", "(": "（", ")": "）",
@@ -43,9 +44,12 @@ public final class KeyboardSession {
     public private(set) var editCaret: Int?
     /// A short note for the bar, shown instead of the pinyin until [clearHint].
     public private(set) var hint: String?
+    /// Two quick spaces type a full stop.
+    public var doubleSpacePeriod = true
     /// Called whenever anything the bar shows has changed.
     public var onChange: (() -> Void)?
 
+    private var lastSpace: Date?
     private var fix: Fix?
     private var fixedSentence: PinyinEngine.Candidate?
     private var fieldContext: SentenceDecoder.Context?
@@ -92,6 +96,7 @@ public final class KeyboardSession {
     // MARK: Keys
 
     public func type(_ character: Character) {
+        lastSpace = nil
         guard language == .chinese else {
             target?.commitText(String(character))
             return
@@ -147,7 +152,17 @@ public final class KeyboardSession {
         } else {
             learner.breakChain()
             predictions = []
-            target?.commitText(" ")
+            let now = Date()
+            if doubleSpacePeriod, let last = lastSpace, now.timeIntervalSince(last) < Self.doubleSpaceWindow,
+               let before = target?.textBeforeCaret, before.hasSuffix(" "),
+               let mark = before.dropLast().last, !mark.isWhitespace, !mark.isPunctuation {
+                target?.deleteBackward()
+                target?.commitText(language == .chinese ? "。" : ". ")
+                lastSpace = nil
+            } else {
+                target?.commitText(" ")
+                lastSpace = now
+            }
             changed()
         }
     }

@@ -27,21 +27,44 @@ public struct LexiconPiece {
     }
 }
 
-/// Fuzzy sounds, folding each spelling a rule treats as equal onto one, as on Android.
-func fuzzyNormalize(_ syllable: String) -> String {
-    var s = syllable
-    if s.hasPrefix("zh") { s = "z" + s.dropFirst(2) }
-    if s.hasPrefix("ch") { s = "c" + s.dropFirst(2) }
-    if s.hasPrefix("sh") { s = "s" + s.dropFirst(2) }
-    if s.hasPrefix("l") { s = "n" + s.dropFirst(1) }
-    if s.count > 2, s.hasSuffix("ang") || s.hasSuffix("eng") || s.hasSuffix("ing") { s.removeLast() }
-    return s
+/// Fuzzy sounds: each rule folds the second spelling onto the first, as on Android.
+public struct FuzzyRules: OptionSet, Hashable {
+    public let rawValue: Int
+    public init(rawValue: Int) { self.rawValue = rawValue }
+
+    public static let zZh = FuzzyRules(rawValue: 1)
+    public static let cCh = FuzzyRules(rawValue: 2)
+    public static let sSh = FuzzyRules(rawValue: 4)
+    public static let nL = FuzzyRules(rawValue: 8)
+    public static let anAng = FuzzyRules(rawValue: 16)
+    public static let enEng = FuzzyRules(rawValue: 32)
+    public static let inIng = FuzzyRules(rawValue: 64)
+    public static let all: FuzzyRules = [.zZh, .cCh, .sSh, .nL, .anAng, .enEng, .inIng]
+    public static let labelled: [(rule: FuzzyRules, label: String)] = [
+        (.zZh, "z = zh"), (.cCh, "c = ch"), (.sSh, "s = sh"), (.nL, "n = l"),
+        (.anAng, "an = ang"), (.enEng, "en = eng"), (.inIng, "in = ing"),
+    ]
+
+    func normalize(_ syllable: String) -> String {
+        var s = syllable
+        if contains(.zZh), s.hasPrefix("zh") { s = "z" + s.dropFirst(2) }
+        if contains(.cCh), s.hasPrefix("ch") { s = "c" + s.dropFirst(2) }
+        if contains(.sSh), s.hasPrefix("sh") { s = "s" + s.dropFirst(2) }
+        if contains(.nL), s.hasPrefix("l") { s = "n" + s.dropFirst(1) }
+        if s.count > 2 {
+            if contains(.anAng), s.hasSuffix("ang") { s.removeLast() }
+            if contains(.enEng), s.hasSuffix("eng") { s.removeLast() }
+            if contains(.inIng), s.hasSuffix("ing") { s.removeLast() }
+        }
+        return s
+    }
 }
 
 /// Lookups over [MappedDictionary] the way PinyinDictionary.kt answers them.
 public final class PinyinLexicon {
     public let dictionary: MappedDictionary
     public let model: LanguageModel?
+    public let fuzzy: FuzzyRules
     public let rawSyllables: Set<String>
     private let normalizedSyllables: Set<String>
     private let syllablePrefixes: Set<String>
@@ -75,11 +98,12 @@ public final class PinyinLexicon {
     /// Changes with what was learned, so cached lookups start over.
     public private(set) var version = 0
 
-    public init(dictionary: MappedDictionary, model: LanguageModel?) {
+    public init(dictionary: MappedDictionary, model: LanguageModel?, fuzzy: FuzzyRules = .all) {
+        self.fuzzy = fuzzy
         self.dictionary = dictionary
         self.model = model.flatMap { $0.words == dictionary.words ? $0 : nil }
         let names = dictionary.syllableNames
-        let folded = names.map(fuzzyNormalize)
+        let folded = names.map(fuzzy.normalize)
         var index: [String: Int] = [:]
         for name in folded where index[name] == nil { index[name] = index.count }
         var prefixes = Set<String>()
@@ -96,7 +120,7 @@ public final class PinyinLexicon {
         syllablePrefixes = prefixes
     }
 
-    public func isSyllable(_ text: String) -> Bool { normalizedSyllables.contains(fuzzyNormalize(text)) }
+    public func isSyllable(_ text: String) -> Bool { normalizedSyllables.contains(fuzzy.normalize(text)) }
     public func isSyllablePrefix(_ text: String) -> Bool { syllablePrefixes.contains(text) }
 
     public func matches(_ pieces: [LexiconPiece], limit: Int) -> [Match] { matchHits(pieces, limit: limit) }
@@ -209,7 +233,7 @@ public final class PinyinLexicon {
         var keys: [[UInt8]] = [[]]
         for piece in pieces {
             let first = piece.text.utf8.first!
-            let options: [UInt8] = piece.text.utf8.count > 1 && (first == 110 || first == 108) ? [110, 108] : [first]
+            let options: [UInt8] = piece.text.utf8.count > 1 && fuzzy.contains(.nL) && (first == 110 || first == 108) ? [110, 108] : [first]
             keys = keys.flatMap { key in options.map { key + [$0] } }
         }
         return keys
@@ -219,7 +243,7 @@ public final class PinyinLexicon {
     private func syllablesFitting(_ piece: LexiconPiece) -> [Bool] {
         let key = piece.isPrefix ? piece.text + "*" : piece.text
         if let known = fitCache[key] { return known }
-        let normalized = fuzzyNormalize(piece.text)
+        let normalized = fuzzy.normalize(piece.text)
         let wanted = normalizedIndex[normalized] ?? -1
         let fits: [Bool] = rawNames.indices.map { id in
             if !piece.isPrefix { return normalizedIds[id] == wanted }
@@ -231,7 +255,7 @@ public final class PinyinLexicon {
     }
 
     private func matchHits(_ pieces: [LexiconPiece], limit: Int) -> [Match] {
-        let wanted = pieces.map { normalizedIndex[fuzzyNormalize($0.text)] ?? -1 }
+        let wanted = pieces.map { normalizedIndex[fuzzy.normalize($0.text)] ?? -1 }
         let fits = pieces.map(syllablesFitting)
         var found: [Int] = []
         for key in initialsKeys(pieces) {
