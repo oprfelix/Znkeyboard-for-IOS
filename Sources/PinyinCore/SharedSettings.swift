@@ -7,7 +7,9 @@ public enum SharedSettings {
     public static let keychainGroup = "6DSHU7W7LQ.com.oprfelix.znkeyboard.shared"
 
     private static let defaults = UserDefaults(suiteName: appGroup) ?? .standard
-    private static let keyAccount = "api-key"
+    /// Before each service kept its own, the one key lived here; the service chosen then takes it.
+    private static let sharedKeyAccount = "api-key"
+    private static var keyAccount: String { "api-key.\(providerKind.rawValue)" }
 
     public static var providerKind: AIProviderKind {
         get { defaults.string(forKey: "provider").flatMap(AIProviderKind.init) ?? .deepSeek }
@@ -19,9 +21,17 @@ public enum SharedSettings {
         set { defaults.set(newValue, forKey: "baseURL") }
     }
 
+    /// Each service keeps its own model, so going back to one restores it.
     public static var model: String {
-        get { defaults.string(forKey: "model") ?? providerKind.defaultModel }
-        set { defaults.set(newValue, forKey: "model") }
+        get {
+            let key = "model.\(providerKind.rawValue)"
+            if let shared = defaults.string(forKey: "model") {
+                defaults.removeObject(forKey: "model")
+                defaults.set(shared, forKey: key)
+            }
+            return defaults.string(forKey: key) ?? providerKind.defaultModel
+        }
+        set { defaults.set(newValue, forKey: "model.\(providerKind.rawValue)") }
     }
 
     public static var translateLanguage: TranslateLanguage {
@@ -117,30 +127,41 @@ public enum SharedSettings {
         AIProvider(baseURL: providerKind.fixedBaseURL ?? customBaseURL, model: model, apiKey: apiKey)
     }
 
+    /// Each service keeps its own key.
     public static var apiKey: String {
         get {
-            var query = keyQuery
-            query[kSecReturnData as String] = true
-            query[kSecMatchLimit as String] = kSecMatchLimitOne
-            var item: CFTypeRef?
-            guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess, let data = item as? Data else { return "" }
-            return String(decoding: data, as: UTF8.self)
+            if let key = readKey(keyAccount) { return key }
+            guard let shared = readKey(sharedKeyAccount) else { return "" }
+            writeKey(shared, keyAccount)
+            writeKey("", sharedKeyAccount)
+            return shared
         }
-        set {
-            SecItemDelete(keyQuery as CFDictionary)
-            guard !newValue.isEmpty else { return }
-            var query = keyQuery
-            query[kSecValueData as String] = Data(newValue.utf8)
-            query[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
-            SecItemAdd(query as CFDictionary, nil)
-        }
+        set { writeKey(newValue, keyAccount) }
     }
 
-    private static var keyQuery: [String: Any] {
+    private static func readKey(_ account: String) -> String? {
+        var query = keyQuery(account)
+        query[kSecReturnData as String] = true
+        query[kSecMatchLimit as String] = kSecMatchLimitOne
+        var item: CFTypeRef?
+        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess, let data = item as? Data else { return nil }
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    private static func writeKey(_ value: String, _ account: String) {
+        SecItemDelete(keyQuery(account) as CFDictionary)
+        guard !value.isEmpty else { return }
+        var query = keyQuery(account)
+        query[kSecValueData as String] = Data(value.utf8)
+        query[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
+        SecItemAdd(query as CFDictionary, nil)
+    }
+
+    private static func keyQuery(_ account: String) -> [String: Any] {
         [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: "ZnKeyboard",
-            kSecAttrAccount as String: keyAccount,
+            kSecAttrAccount as String: account,
             kSecAttrAccessGroup as String: keychainGroup,
         ]
     }

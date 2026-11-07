@@ -30,7 +30,7 @@ public final class PinyinEngine {
         static let fullMatchLimit = 30
         static let partialMatchLimit = 8
         static let singleSyllableLimit = 40
-        static let maxSentences = 3
+        static let maxSentences = 6
     }
 
     private let lexicon: PinyinLexicon

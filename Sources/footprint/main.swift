@@ -24,7 +24,7 @@ for (row, letters) in ["qwertyuiop", "asdfghjkl", "zxcvbnm"].enumerated() {
 }
 let keys = KeyGeometry(centersX: centersX, centersY: centersY, pitchX: pitch, pitchY: 54)
 let untrained = TouchModel()
-let touch = TouchDecoder(touchModel: { untrained }, languageModel: CharLanguageModel())
+let touch = TouchDecoder(touchModel: { untrained }, languageModel: { CharLanguageModel() })
 var tapsByTyped: [String: SentenceDecoder.Taps] = [:]
 if CommandLine.arguments.count > 4 {
     for line in try! String(contentsOfFile: CommandLine.arguments[4], encoding: .utf8).split(separator: "\n") where !line.hasPrefix("#") {

@@ -41,7 +41,7 @@ public final class TypingLearner {
     private static let space: UInt8 = 32
 
     private let touchModel: () -> TouchModel
-    private let languageModel: CharLanguageModel
+    private let languageModel: () -> CharLanguageModel
     private let clock: () -> Int64
     private var pending: [Entry] = []
     private var deleted: [Entry] = []
@@ -50,7 +50,7 @@ public final class TypingLearner {
     private var confirmed1 = TypingLearner.space
     public private(set) var confirmations = 0
 
-    public init(touchModel: @escaping () -> TouchModel, languageModel: CharLanguageModel, clock: @escaping () -> Int64) {
+    public init(touchModel: @escaping () -> TouchModel, languageModel: @escaping () -> CharLanguageModel, clock: @escaping () -> Int64) {
         self.touchModel = touchModel
         self.languageModel = languageModel
         self.clock = clock
@@ -138,7 +138,7 @@ public final class TypingLearner {
             sample.confirmed = true
         }
         if entry.char != Self.space || confirmed1 != Self.space {
-            languageModel.learn(confirmed2, confirmed1, entry.char)
+            languageModel().learn(confirmed2, confirmed1, entry.char)
         }
         confirmed2 = confirmed1
         confirmed1 = entry.char

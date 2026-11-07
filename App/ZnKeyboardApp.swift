@@ -110,8 +110,8 @@ struct FoldingCard<Content: View>: View {
     let title: String
     let symbol: String
     let summary: String
+    @Binding var open: Bool
     @ViewBuilder let content: Content
-    @State private var open = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -146,7 +146,6 @@ struct FoldingCard<Content: View>: View {
 /// A plain UIKit text view: an ordinary field for every keyboard the user has, ZnKeyboard included.
 struct TryField: UIViewRepresentable {
     @Binding var text: String
-    @Binding var editing: Bool
     let placeholder: String
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
@@ -192,18 +191,19 @@ struct TryField: UIViewRepresentable {
             parent.text = view.text
             placeholder?.isHidden = !view.text.isEmpty
         }
-        func textViewDidBeginEditing(_ view: UITextView) { parent.editing = true }
-        func textViewDidEndEditing(_ view: UITextView) { parent.editing = false }
     }
 }
 
-/// Turning the keyboard on, the AI settings, and a box to try it in.
+/// Three pages: translation comes first, as it is what the keyboard is for.
 struct SetupView: View {
     @State private var kind = SharedSettings.providerKind
     @State private var baseURL = SharedSettings.customBaseURL
     @State private var model = SharedSettings.model
     @State private var apiKey = SharedSettings.apiKey
     @State private var showKey = false
+    @State private var aiOpen = SharedSettings.apiKey.isEmpty
+    @State private var askingForKey = false
+    @FocusState private var editingKey: Bool
     @State private var translate = SharedSettings.translateLanguage
     @State private var reading = SharedSettings.readingLanguage
     @State private var text = ""
@@ -219,10 +219,13 @@ struct SetupView: View {
     @State private var adaptiveTouch = SharedSettings.adaptiveTouch
     @State private var models: [String] = []
     @State private var fullAccess = false
-    @State private var trying = false
     @Environment(\.scenePhase) private var scenePhase
 
     private var isReady: Bool { fullAccess }
+
+    private var aiConfigured: Bool {
+        !apiKey.isEmpty && !model.isEmpty && (kind != .openAICompatible || !baseURL.isEmpty)
+    }
 
     /// The saved model stays listed even when the provider didn't name it.
     private var modelChoices: [String] {
@@ -231,29 +234,24 @@ struct SetupView: View {
     }
 
     var body: some View {
-        ScrollViewReader { reader in
+        TabView {
+            translatePage.tabItem { Label("翻译", systemImage: "translate") }
+            keyboardPage.tabItem { Label("键盘", systemImage: "keyboard") }
+            aboutPage.tabItem { Label("关于", systemImage: "info.circle") }
+        }
+        .background(KeyboardDismisser())
+        .onAppear(perform: refresh)
+        .onChange(of: scenePhase) { if $0 == .active { refresh() } }
+        .task(id: "\(kind.rawValue)\(apiKey)\(baseURL)") { await loadModels() }
+    }
+
+    private func page<Content: View>(@ViewBuilder content: () -> Content) -> some View {
         ScrollView {
-            VStack(spacing: 16) {
-                header
-                setup
-                tryIt.id("try")
-                fuzzy
-                feel
-                ai
-                VStack(spacing: 8) {
-                    Label("文字从手机直接发给你选的服务商，没有中转服务器", systemImage: "lock.shield")
-                        .foregroundStyle(.secondary)
-                    Link("隐私政策", destination: URL(string: "https://znkeyboard.2amz.com/privacy")!)
-                }
-                .font(.footnote)
-                .padding(.vertical, 8)
-            }
-            .padding(.horizontal, 16)
-            // Room to lift the box above the keyboard, whatever height it has.
-            .padding(.bottom, trying ? 360 : 24)
+            VStack(spacing: 16, content: content)
+                .padding(.horizontal, 16)
+                .padding(.bottom, 24)
         }
         .scrollDismissesKeyboard(.interactively)
-        .background(KeyboardDismisser())
         .background(background.ignoresSafeArea())
         // Content scrolls under the status bar, not through it.
         .overlay(alignment: .top) {
@@ -264,17 +262,90 @@ struct SetupView: View {
             }
             .frame(height: 0)
         }
-        .onChange(of: trying) { focused in
-            guard focused else { return }
-            Task {
-                try? await Task.sleep(nanoseconds: 350_000_000)
-                withAnimation { reader.scrollTo("try", anchor: .top) }
+    }
+
+    private func pageTitle(_ title: String) -> some View {
+        Text(title)
+            .font(.largeTitle.weight(.bold))
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 4)
+            .padding(.top, 16)
+    }
+
+    private var translatePage: some View {
+        ScrollViewReader { reader in
+            page {
+                header
+                if !isReady { enable }
+                translation
+                ai.id("ai")
+                Label("文字从手机直接发给你选的服务商，没有中转服务器", systemImage: "lock.shield")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .padding(.vertical, 8)
+            }
+            .alert("请先配置 API", isPresented: $askingForKey) {
+                Button("以后再说", role: .cancel) {}
+                Button("去配置") {
+                    withAnimation(.snappy) {
+                        aiOpen = true
+                        reader.scrollTo("ai", anchor: .top)
+                    }
+                    if apiKey.isEmpty { editingKey = true }
+                }
+            } message: {
+                Text("翻译要用你自己的 AI 服务。配置好 API Key 后，就能选择翻译语言。")
             }
         }
+    }
+
+    private var keyboardPage: some View {
+        page {
+            pageTitle("键盘")
+            tryIt
+            fuzzy
+            feel
         }
-        .onAppear(perform: refresh)
-        .onChange(of: scenePhase) { if $0 == .active { refresh() } }
-        .task(id: "\(kind.rawValue)\(apiKey)\(baseURL)") { await loadModels() }
+    }
+
+    private var aboutPage: some View {
+        page {
+            pageTitle("关于")
+            keyboardStatus
+            VStack(spacing: 0) {
+                linkRow("隐私政策", "https://znkeyboard.2amz.com/privacy", "arrow.up.right")
+                Divider()
+                linkRow("反馈问题", "mailto:oprfelix@gmail.com", "envelope")
+                Divider()
+                HStack {
+                    Text("版本")
+                    Spacer()
+                    Text(version).foregroundStyle(.secondary)
+                }
+                .padding(.vertical, 14)
+            }
+            .font(.subheadline)
+            .padding(.horizontal, 18)
+            .padding(.vertical, 4)
+            .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        }
+    }
+
+    private func linkRow(_ title: String, _ url: String, _ symbol: String) -> some View {
+        Link(destination: URL(string: url)!) {
+            HStack {
+                Text(title).foregroundStyle(.primary)
+                Spacer()
+                Image(systemName: symbol).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+            }
+            .padding(.vertical, 14)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var version: String {
+        let info = Bundle.main.infoDictionary
+        return "\(info?["CFBundleShortVersionString"] as? String ?? "") (\(info?["CFBundleVersion"] as? String ?? ""))"
     }
 
     /// The keyboard reports full access once it has it; iOS lets no app ask whether it is added.
@@ -314,29 +385,30 @@ struct SetupView: View {
         .padding(.bottom, 8)
     }
 
-    @ViewBuilder private var setup: some View {
-        if isReady {
-            HStack(spacing: 10) {
-                Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
-                Text("键盘已就绪").font(.subheadline.weight(.medium))
-                Spacer()
-                Button("系统设置", action: openSettings).font(.footnote)
+    private var keyboardStatus: some View {
+        HStack(spacing: 10) {
+            Image(systemName: isReady ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
+                .foregroundStyle(isReady ? .green : .orange)
+            Text(isReady ? "键盘已就绪" : "键盘未启用").font(.subheadline.weight(.medium))
+            Spacer()
+            Button("系统设置", action: openSettings).font(.footnote)
+        }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 14)
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+    }
+
+    private var enable: some View {
+        Card(title: "启用键盘", symbol: "keyboard") {
+            VStack(alignment: .leading, spacing: 14) {
+                Step(number: 1, title: "添加键盘", detail: "设置 → 通用 → 键盘 → 键盘 → 添加新键盘，只选 ZnKeyboard")
+                Step(number: 2, title: "允许完全访问", detail: "润色和翻译要联网，复制翻译要读取剪贴板。打开后，切到 ZnKeyboard 打一个字")
             }
-            .padding(.horizontal, 18)
-            .padding(.vertical, 14)
-            .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-        } else {
-            Card(title: "启用键盘", symbol: "keyboard") {
-                VStack(alignment: .leading, spacing: 14) {
-                    Step(number: 1, title: "添加键盘", detail: "设置 → 通用 → 键盘 → 键盘 → 添加新键盘，只选 ZnKeyboard")
-                    Step(number: 2, title: "允许完全访问", detail: "润色和翻译要联网，复制翻译要读取剪贴板。打开后，切到 ZnKeyboard 打一个字")
-                }
-                Button(action: openSettings) {
-                    Text("打开系统设置").font(.subheadline.weight(.semibold)).frame(maxWidth: .infinity, minHeight: 44)
-                }
-                .buttonStyle(.borderedProminent)
-                .buttonBorderShape(.roundedRectangle(radius: 12))
+            Button(action: openSettings) {
+                Text("打开系统设置").font(.subheadline.weight(.semibold)).frame(maxWidth: .infinity, minHeight: 44)
             }
+            .buttonStyle(.borderedProminent)
+            .buttonBorderShape(.roundedRectangle(radius: 12))
         }
     }
 
@@ -344,18 +416,54 @@ struct SetupView: View {
         if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
     }
 
-    private var ai: some View {
-        Card(title: "AI 润色与翻译", symbol: "sparkles") {
-            Picker("服务商", selection: $kind) {
-                Text("DeepSeek").tag(AIProviderKind.deepSeek)
-                Text("Gemini").tag(AIProviderKind.gemini)
-                Text("自定义").tag(AIProviderKind.openAICompatible)
+    private var translation: some View {
+        Card(title: "翻译语言", symbol: "translate") {
+            languageRow("回复翻译成", "键盘上显示为「翻译为\(translate.chineseName)」", $translate) { SharedSettings.translateLanguage = $0 }
+            languageRow("外文消息翻译成", "复制外文消息后使用", $reading) { SharedSettings.readingLanguage = $0 }
+        }
+    }
+
+    private func providerName(_ kind: AIProviderKind) -> String {
+        switch kind {
+        case .deepSeek: return "DeepSeek"
+        case .gemini: return "Gemini"
+        case .openAICompatible: return "自定义"
+        }
+    }
+
+    /// A closed dropdown: the choice can only change on purpose, through its menu.
+    private func dropdown(_ title: String, _ value: String) -> some View {
+        InputBox {
+            HStack(spacing: 10) {
+                Text(title).foregroundStyle(.secondary).fixedSize()
+                Text(value)
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .minimumScaleFactor(0.8)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.secondary)
             }
-            .pickerStyle(.segmented)
+        }
+    }
+
+    private var ai: some View {
+        FoldingCard(title: "API 配置", symbol: "key", summary: aiConfigured ? "\(providerName(kind)) 已配置" : "未配置", open: $aiOpen) {
+            Menu {
+                Picker("服务商", selection: $kind) {
+                    ForEach(AIProviderKind.allCases, id: \.self) { Text(providerName($0)).tag($0) }
+                }
+            } label: {
+                dropdown("服务商", providerName(kind))
+            }
+            .buttonStyle(.plain)
             .onChange(of: kind) { newValue in
                 SharedSettings.providerKind = newValue
-                model = newValue.defaultModel
-                SharedSettings.model = model
+                model = SharedSettings.model
+                apiKey = SharedSettings.apiKey
+                showKey = false
                 status = nil
             }
             if kind == .openAICompatible {
@@ -370,12 +478,12 @@ struct SetupView: View {
                 HStack {
                     // No SecureField: iOS would take the page for a login form and hide every
                     // third-party keyboard, ZnKeyboard included, in the fields around it.
-                    if showKey || apiKey.isEmpty {
+                    if showKey || editingKey || apiKey.isEmpty {
                         TextField("API Key", text: $apiKey)
                             .textContentType(nil)
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled()
-                            .onChange(of: apiKey) { SharedSettings.apiKey = $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                            .focused($editingKey)
                     } else {
                         Text(String(repeating: "•", count: min(apiKey.count, 24)))
                             .lineLimit(1)
@@ -390,6 +498,8 @@ struct SetupView: View {
                         }
                     }
                 }
+                // Here, not on the field: the field leaves the page once the key is hidden.
+                .onChange(of: apiKey) { SharedSettings.apiKey = $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             }
             if kind == .openAICompatible && models.isEmpty {
                 InputBox {
@@ -408,21 +518,9 @@ struct SetupView: View {
                         ForEach(modelChoices, id: \.self) { Text($0).tag($0) }
                     }
                 } label: {
-                    InputBox {
-                        HStack(spacing: 10) {
-                            Text("模型").foregroundStyle(.secondary).fixedSize()
-                            Text(model)
-                                .foregroundStyle(.primary)
-                                .lineLimit(1)
-                                .truncationMode(.middle)
-                                .minimumScaleFactor(0.8)
-                                .frame(maxWidth: .infinity, alignment: .trailing)
-                            Image(systemName: "chevron.up.chevron.down")
-                                .font(.caption2.weight(.semibold))
-                                .foregroundStyle(.secondary)
-                        }
-                    }
+                    dropdown("模型", model)
                 }
+                .buttonStyle(.plain)
                 .onChange(of: model) { SharedSettings.model = $0 }
             }
             Button(action: test) {
@@ -440,14 +538,11 @@ struct SetupView: View {
                     .font(.footnote)
                     .foregroundStyle(status.ok ? .green : .red)
             }
-            Divider()
-            languageRow("回复翻译成", "键盘上显示为「翻译为\(translate.chineseName)」", $translate) { SharedSettings.translateLanguage = $0 }
-            languageRow("外文消息翻译成", "复制外文消息后使用", $reading) { SharedSettings.readingLanguage = $0 }
         }
     }
 
     private var fuzzy: some View {
-        FoldingCard(title: "模糊音", symbol: "waveform", summary: "已开 \(FuzzyRules.labelled.filter { fuzzyRules.contains($0.rule) }.count) 组") {
+        Card(title: "模糊音", symbol: "waveform") {
             Text("分不清的读音可以打开，打哪个音都能出字。").font(.footnote).foregroundStyle(.secondary)
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
                 ForEach(FuzzyRules.labelled, id: \.rule) { item in
@@ -473,7 +568,7 @@ struct SetupView: View {
     }
 
     private var feel: some View {
-        FoldingCard(title: "手感", symbol: "hand.tap", summary: "振动、声音、气泡") {
+        Card(title: "手感", symbol: "hand.tap") {
             VStack(spacing: 0) {
                 setting("按键振动", "需要完全访问", $haptics) { SharedSettings.hapticsEnabled = $0 }
                 setting("按键声音", "需要完全访问", $keySound) { SharedSettings.keySoundEnabled = $0 }
@@ -504,18 +599,27 @@ struct SetupView: View {
                 Text(detail).font(.caption).foregroundStyle(.secondary)
             }
             Spacer()
-            Picker(title, selection: value) {
-                ForEach(TranslateLanguage.all, id: \.self) { Text($0.chineseName).tag($0) }
+            if aiConfigured {
+                Picker(title, selection: value) {
+                    ForEach(TranslateLanguage.all, id: \.self) { Text($0.chineseName).tag($0) }
+                }
+                .labelsHidden()
+            } else {
+                Button { askingForKey = true } label: {
+                    HStack(spacing: 4) {
+                        Text(value.wrappedValue.chineseName)
+                        Image(systemName: "chevron.up.chevron.down").font(.caption2.weight(.semibold))
+                    }
+                }
             }
-            .labelsHidden()
-            .onChange(of: value.wrappedValue) { save($0) }
         }
+        .onChange(of: value.wrappedValue) { save($0) }
     }
 
     private var tryIt: some View {
         Card(title: "试一试", symbol: "text.cursor") {
             InputBox {
-                TryField(text: $text, editing: $trying, placeholder: "切换到 ZnKeyboard，打几个字试试")
+                TryField(text: $text, placeholder: "切换到 ZnKeyboard，打几个字试试")
                     .padding(.vertical, 6)
             }
         }

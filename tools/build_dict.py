@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Builds dict.bin from the Android keyboard's dict.tsv and trade.tsv.
+"""Builds dict.bin from the Android keyboard's dict.tsv and trade word lists.
 
 The keyboard extension has little memory, so the dictionary is one read-only file mapped into
 memory and nothing is parsed into objects. Little-endian, 4-byte aligned sections:
@@ -13,13 +13,14 @@ Rows are sorted by their initials, then best first, so a binary search finds the
 initials and the first match is the best. Word ids are distinct dict.tsv texts in file order, the
 ids lm.bin was built for; trade words not in dict.tsv have id -1.
 
-Usage: tools/build_dict.py <dict.tsv> <trade.tsv> <dict.bin>
+Usage: tools/build_dict.py <dict.tsv> <trade.tsv>... <dict.bin>
+(trade.tsv is Android's, then tools/trade_extra.tsv.)
 """
 import math
 import struct
 import sys
 
-dict_path, trade_path, out_path = sys.argv[1:]
+dict_path, *trade_paths, out_path = sys.argv[1:]
 rows, ids, total = [], {}, 0.0
 for line in open(dict_path, encoding="utf8"):
     text, spelling, weight = line.rstrip("\n").split("\t")[:3]
@@ -29,7 +30,7 @@ for line in open(dict_path, encoding="utf8"):
 dict_rows = len(rows)
 known = {(r[0], " ".join(r[1])): r for r in rows}
 spoken = {s for r in rows for s in r[1]}
-for line in open(trade_path, encoding="utf8"):
+for line in (line for path in trade_paths for line in open(path, encoding="utf8")):
     parts = line.rstrip("\n").split("\t")
     if len(parts) != 3 or not set(parts[1].split(" ")) <= spoken:
         continue

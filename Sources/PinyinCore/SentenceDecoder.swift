@@ -71,13 +71,13 @@ public final class SentenceDecoder {
         static let tradeBonus: Float = 2.5
         static let maxInput = 60
         static let maxCache = 3000
-        static let fuzzyChoices = 8
+        static let fuzzyChoices = 16
         static let fuzzyCost: Float = 2.5
         static let maxSyllableLength = 6
         static let maxWordSyllables = 6
         static let wordCost: Float = 22
         static let beam = 6
-        static let lmChoices = 8
+        static let lmChoices = 16
         static let maxAlternates = 3
         static let alternativeMargin: Float = 6
         static let maxReadingsTried = 24

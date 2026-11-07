@@ -1,5 +1,10 @@
 import UIKit
 
+/// Buttons answer at once, yet a drag that starts on one still scrolls.
+class CandidateScroller: UIScrollView {
+    override func touchesShouldCancel(in view: UIView) -> Bool { true }
+}
+
 /// The pinyin above and a row of candidates, as on Android.
 final class CandidateBarView: UIView, UIScrollViewDelegate {
     var onTap: ((Int) -> Void)?
@@ -11,7 +16,7 @@ final class CandidateBarView: UIView, UIScrollViewDelegate {
     var onDismissOffer: (() -> Void)?
 
     private let label = UILabel()
-    private let scroller = UIScrollView()
+    private let scroller = CandidateScroller()
     private let fix = UIButton(type: .system)
     private let expand = UIButton(type: .system)
     private let divider = UIView()
@@ -216,7 +221,7 @@ final class CandidateBarView: UIView, UIScrollViewDelegate {
     private func styleTool(_ button: UIButton) {
         button.titleLabel?.font = .systemFont(ofSize: 14)
         button.setTitleColor(.label, for: .normal)
-        button.backgroundColor = UIColor { $0.userInterfaceStyle == .dark ? UIColor(white: 0.42, alpha: 1) : .white }
+        button.backgroundColor = KeyboardKeysView.letterKey
         button.layer.cornerRadius = 10
         button.contentEdgeInsets = UIEdgeInsets(top: 0, left: 12, bottom: 0, right: 12)
     }

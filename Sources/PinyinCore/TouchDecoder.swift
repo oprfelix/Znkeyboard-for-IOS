@@ -25,9 +25,9 @@ public final class TouchDecoder {
     private static let languageWeight: Float = 0.7
 
     private let touchModel: () -> TouchModel
-    private let languageModel: CharLanguageModel
+    private let languageModel: () -> CharLanguageModel
 
-    public init(touchModel: @escaping () -> TouchModel, languageModel: CharLanguageModel) {
+    public init(touchModel: @escaping () -> TouchModel, languageModel: @escaping () -> CharLanguageModel) {
         self.touchModel = touchModel
         self.languageModel = languageModel
     }
@@ -38,6 +38,7 @@ public final class TouchDecoder {
             return geometricLetter
         }
         let model = touchModel()
+        let language = languageModel()
         var best = geometricLetter
         var bestScore = -Float.infinity
         for letter in 0..<TouchModel.letterCount {
@@ -48,7 +49,7 @@ public final class TouchDecoder {
             let dy = y - cy - params.meanY
             var score = -0.5 * (dx * dx / params.varX + dy * dy / params.varY) - 0.5 * log(params.varX * params.varY)
             if useLanguageModel {
-                score += Self.languageWeight * languageModel.logProb(previous2, previous1, UInt8(97 + letter))
+                score += Self.languageWeight * language.logProb(previous2, previous1, UInt8(97 + letter))
             }
             if score > bestScore {
                 bestScore = score

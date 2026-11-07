@@ -1,7 +1,7 @@
 import UIKit
 
 /// All the candidates, opened from the bar's arrow, in the place of the keys.
-final class CandidateGridView: UIScrollView {
+final class CandidateGridView: CandidateScroller {
     var onTap: ((Int) -> Void)?
 
     private static let rowHeight: CGFloat = 46

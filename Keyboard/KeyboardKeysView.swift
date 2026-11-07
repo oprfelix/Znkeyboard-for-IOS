@@ -55,7 +55,8 @@ final class KeyboardKeysView: UIView {
     private static let fills: CGFloat = 0
     private static let symbolKey: CGFloat = 1.22
     private static let wideSymbolKey: CGFloat = 1.47
-    private static let letterKey = UIColor { $0.userInterfaceStyle == .dark ? UIColor(white: 0.42, alpha: 1) : .white }
+    /// Sampled from the system keyboard, which fills every key alike in both appearances.
+    static let letterKey = UIColor { $0.userInterfaceStyle == .dark ? UIColor(white: 61.0 / 255, alpha: 1) : .white }
 
     var onKey: ((Key) -> Void)?
     var onGlobe: ((UIView, UIEvent) -> Void)?
@@ -116,6 +117,7 @@ final class KeyboardKeysView: UIView {
     }
 
     func setChinese(_ value: Bool) {
+        typing?.chinese = value
         if chinese != value {
             chinese = value
             rebuild()
