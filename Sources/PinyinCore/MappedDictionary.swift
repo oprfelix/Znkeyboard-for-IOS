@@ -18,7 +18,12 @@ public final class MappedDictionary {
     private let syllableIds: UnsafePointer<UInt16>
     private let initials: UnsafePointer<UInt8>
     private let text: UnsafePointer<UInt8>
+    private let rowsByCode: UnsafePointer<UInt32>
+    private let rowsByInitialsCode: UnsafePointer<UInt32>
+    private let initialsCodeRows: Int
     public let syllableNames: [String]
+    /// Each syllable's 9-key digits, and those of its first letter.
+    private let syllableCodes: [[UInt8]]
 
     public init?(path: String) {
         let file = open(path, O_RDONLY)
@@ -32,7 +37,7 @@ public final class MappedDictionary {
         guard memcmp(start, "ZNDB", 4) == 0 else { return nil }
         let header = start.assumingMemoryBound(to: UInt32.self)
         let count = Int(header[2])
-        var at = 28
+        var at = 32
         func section<T>(_ type: T.Type, _ items: Int) -> UnsafePointer<T> {
             let pointer = (start + at).assumingMemoryBound(to: T.self)
             at += (items * MemoryLayout<T>.stride + 3) & ~3
@@ -54,8 +59,12 @@ public final class MappedDictionary {
         syllableIds = section(UInt16.self, syllables)
         initials = section(UInt8.self, syllables)
         text = section(UInt8.self, Int(textOffsets[count]))
+        rowsByCode = section(UInt32.self, count)
+        initialsCodeRows = Int(header[7])
+        rowsByInitialsCode = section(UInt32.self, initialsCodeRows)
         let names = UnsafeBufferPointer(start: (start + at).assumingMemoryBound(to: UInt8.self), count: length - at)
         syllableNames = String(decoding: names, as: UTF8.self).split(separator: "\n").map(String.init)
+        syllableCodes = syllableNames.map { Array(NineKey.code($0).utf8) }
     }
 
     deinit { munmap(UnsafeMutableRawPointer(mutating: base), size) }
@@ -82,6 +91,53 @@ public final class MappedDictionary {
     public func rows(initials key: [UInt8]) -> Range<Int> {
         let first = lowerBound(key, orAfter: false)
         return first..<lowerBound(key, orAfter: true)
+    }
+
+    /// Rows whose 9-key code is exactly [key], best first.
+    public func rows(code key: [UInt8]) -> [Int] {
+        rows(in: rowsByCode, count: rows, key) { self.compareCode($0, $1) }
+    }
+
+    /// Rows of two or more syllables whose initials have the 9-key code [key], best first.
+    public func rows(initialsCode key: [UInt8]) -> [Int] {
+        rows(in: rowsByInitialsCode, count: initialsCodeRows, key) { self.compareInitialsCode($0, $1) }
+    }
+
+    private func rows(in order: UnsafePointer<UInt32>, count: Int, _ key: [UInt8], _ compare: (Int, [UInt8]) -> Int) -> [Int] {
+        var low = 0, high = count
+        while low < high {
+            let mid = (low + high) / 2
+            if compare(Int(order[mid]), key) < 0 { low = mid + 1 } else { high = mid }
+        }
+        var result: [Int] = []
+        while low < count, compare(Int(order[low]), key) == 0 {
+            result.append(Int(order[low]))
+            low += 1
+        }
+        return result
+    }
+
+    private func compareCode(_ row: Int, _ key: [UInt8]) -> Int {
+        var at = 0
+        for index in Int(syllableOffsets[row])..<Int(syllableOffsets[row + 1]) {
+            for digit in syllableCodes[Int(syllableIds[index])] {
+                guard at < key.count else { return 1 }
+                if digit != key[at] { return digit < key[at] ? -1 : 1 }
+                at += 1
+            }
+        }
+        return at == key.count ? 0 : -1
+    }
+
+    private func compareInitialsCode(_ row: Int, _ key: [UInt8]) -> Int {
+        var at = 0
+        for index in Int(syllableOffsets[row])..<Int(syllableOffsets[row + 1]) {
+            guard at < key.count else { return 1 }
+            let digit = syllableCodes[Int(syllableIds[index])][0]
+            if digit != key[at] { return digit < key[at] ? -1 : 1 }
+            at += 1
+        }
+        return at == key.count ? 0 : -1
     }
 
     /// Rows whose text starts with [prefix], by text; the text itself comes first.

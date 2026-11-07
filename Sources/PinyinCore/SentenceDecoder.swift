@@ -75,6 +75,7 @@ public final class SentenceDecoder {
         static let fuzzyCost: Float = 2.5
         static let maxSyllableLength = 6
         static let maxWordSyllables = 6
+        static let maxNineKeyWordDigits = 24
         static let wordCost: Float = 22
         static let beam = 6
         static let lmChoices = 16
@@ -205,6 +206,41 @@ public final class SentenceDecoder {
             let parts = steps.map { $0.word! }
             let spelling = steps.map { $0.pieces.map(\.text).joined(separator: " ") }.joined(separator: " ")
             return Sentence(text: parts.map(\.text).joined(), parts: parts, spelling: spelling, cost: reading.cost)
+        }
+    }
+
+    /// The best [limit] readings of 9-key [digits]: one code spells many words, so more words are
+    /// tried for each run than for letters.
+    func decodeNineKey(_ digits: String, before: Context?, limit: Int) -> [Sentence] {
+        let typed = Array(digits)
+        let n = typed.count
+        if n < 2 || n > C.maxInput { return [] }
+        let model = lexicon.model
+        let beam = model == nil ? 1 : C.beam
+        let choices = model == nil ? 1 : C.lmChoices
+        var best = [[Step]](repeating: [], count: n + 1)
+        let startContext = before.map { $0.id >= 0 && model != nil ? $0.id : (model?.start ?? -1) } ?? (model?.start ?? -1)
+        best[0].append(Step(0, nil, nil, [], startContext, before?.text))
+        for start in 0..<n {
+            let here = best[start]
+            if here.isEmpty { continue }
+            for end in (start + 1)...min(n, start + C.maxNineKeyWordDigits) {
+                let found = lexicon.nineKeyWords(String(typed[start..<end]), limit: choices)
+                for step in here {
+                    for candidate in found {
+                        let match = candidate.match
+                        let extra = candidate.byInitials ? C.initialCost * Float(match.word.syllables.count) : 0
+                        if model != nil, best[end].count >= beam, best[end].last!.cost <= step.cost + C.lmWordCost + extra { continue }
+                        let cost = step.cost + extra + wordCost(match, step.context, step.text)
+                        relax(&best[end], Step(cost, step, match.word, [], match.word.id, match.word.text), beam)
+                    }
+                }
+            }
+        }
+        return bestReadings(best[n], limit: limit).compactMap { reading in
+            let parts = reading.steps.reversed().compactMap(\.word)
+            if parts.isEmpty { return nil }
+            return Sentence(text: parts.map(\.text).joined(), parts: parts, spelling: parts.flatMap(\.syllables).joined(separator: " "), cost: reading.cost)
         }
     }
 

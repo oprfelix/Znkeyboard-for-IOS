@@ -7,6 +7,7 @@ import UIKit
 final class KeyboardKeysView: UIView {
     enum Key {
         case text(String), literal(String), space, backspace, returnKey, language, nextKeyboard
+        case digit(Character), punctuation, separator, nextSpelling
     }
 
     private enum Action {
@@ -29,11 +30,14 @@ final class KeyboardKeysView: UIView {
 
         var isLetterOrSpace: Bool {
             switch action {
-            case .key(.text), .key(.literal), .key(.space): return true
+            case .key(.text), .key(.literal), .key(.space), .key(.digit): return true
             default: return false
             }
         }
     }
+
+    /// A key of the 9-key keyboard, placed by column and row.
+    private typealias GridKey = (cell: KeyCell, column: Int, row: Int, width: Int, height: Int)
 
     private typealias Press = (touch: UITouch, cell: KeyCell)
 
@@ -48,6 +52,8 @@ final class KeyboardKeysView: UIView {
     private static let gap: CGFloat = 6
     private static let sideMargin: CGFloat = 6.5
     private static let cornerRadius: CGFloat = 9
+    private static let gridSideMargin: CGFloat = 8
+    private static let gridRowGap: CGFloat = 7
     // In widths of a letter key, measured on the system keyboard.
     private static let sideKey: CGFloat = 1.35
     private static let bottomKey: CGFloat = 1.3
@@ -65,6 +71,8 @@ final class KeyboardKeysView: UIView {
     var showsGlobe = true { didSet { if showsGlobe != oldValue { rebuild() } } }
     var showsNumberRow = false { didSet { if showsNumberRow != oldValue { rebuild() } } }
     var showsPopup = true
+    /// Chinese is typed on the 9-key layout.
+    var nineKey = false { didSet { if nineKey != oldValue { rebuild() } } }
     /// A letter typed: its text, how the touch fitted each key, and the learner's record of it.
     var onLetter: ((String, [Float]?, TypingLearner.Sample?) -> Void)?
     var typing: AdaptiveTyping?
@@ -87,6 +95,12 @@ final class KeyboardKeysView: UIView {
     private var displayLink: CADisplayLink?
     private var letterCells = [KeyCell?](repeating: nil, count: 26)
     private var geometry: KeyGeometry?
+    private var grid: [GridKey] = []
+    private weak var separatorCell: KeyCell?
+    private weak var spaceCell: KeyCell?
+    private weak var returnCell: KeyCell?
+    private var composing = false
+    private var showsGrid: Bool { nineKey && chinese && !symbols }
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -124,6 +138,20 @@ final class KeyboardKeysView: UIView {
         }
     }
 
+    /// While composing, three keys of the 9-key layout do something else.
+    func setComposing(_ value: Bool) {
+        guard composing != value else { return }
+        composing = value
+        updateGridKeys()
+    }
+
+    private func updateGridKeys() {
+        separatorCell?.text = composing ? "分隔" : "^^"
+        spaceCell?.text = composing ? "选定" : "空格"
+        returnCell?.text = composing ? "确认" : nil
+        returnCell?.icon?.isHidden = composing
+    }
+
     private func letters(_ text: String) -> [(String, Action, CGFloat)] {
         text.map { character in
             let shown = shifted ? String(character).uppercased() : String(character)
@@ -134,6 +162,13 @@ final class KeyboardKeysView: UIView {
     private func rebuild() {
         cells.forEach { $0.removeFromSuperview() }
         cells = []
+        grid = []
+        rows = []
+        if showsGrid {
+            buildGrid()
+            setNeedsLayout()
+            return
+        }
         var layout: [[(String, Action, CGFloat)]]
         if symbols {
             layout = symbolRows()
@@ -153,25 +188,10 @@ final class KeyboardKeysView: UIView {
         layout.append(bottom)
         letterCells = [KeyCell?](repeating: nil, count: 26)
         geometry = nil
-        let background = Self.letterKey.resolvedColor(with: traitCollection).cgColor
         rows = layout.map { row in
             row.map { title, action, weight in
-                let cell = KeyCell()
-                cell.text = title
-                cell.textAlignment = .center
-                cell.font = font(for: title, action)
-                cell.textColor = .label
-                cell.isUserInteractionEnabled = false
-                cell.layer.cornerRadius = Self.cornerRadius
-                cell.layer.backgroundColor = background
-                cell.action = action
+                let cell = makeCell(title, action)
                 if !symbols, let letter = Self.letterIndex(cell) { letterCells[letter] = cell }
-                if let symbol = symbol(for: action) {
-                    let icon = UIImageView(image: UIImage(systemName: symbol, withConfiguration: Self.iconConfiguration))
-                    icon.tintColor = .label
-                    cell.addSubview(icon)
-                    cell.icon = icon
-                }
                 if case .key(.space) = action, chinese {
                     let corner = UILabel()
                     corner.text = "拼"
@@ -180,12 +200,74 @@ final class KeyboardKeysView: UIView {
                     cell.addSubview(corner)
                     cell.corner = corner
                 }
-                addSubview(cell)
-                cells.append(cell)
                 return (cell, weight)
             }
         }
         setNeedsLayout()
+    }
+
+    private func makeCell(_ title: String, _ action: Action) -> KeyCell {
+        let cell = KeyCell()
+        cell.text = title
+        cell.textAlignment = .center
+        cell.font = font(for: title, action)
+        cell.textColor = .label
+        cell.isUserInteractionEnabled = false
+        cell.layer.cornerRadius = Self.cornerRadius
+        cell.layer.backgroundColor = Self.letterKey.resolvedColor(with: traitCollection).cgColor
+        cell.action = action
+        if let symbol = symbol(for: action) {
+            let icon = UIImageView(image: UIImage(systemName: symbol, withConfiguration: Self.iconConfiguration))
+            icon.tintColor = .label
+            cell.addSubview(icon)
+            cell.icon = icon
+        }
+        addSubview(cell)
+        cells.append(cell)
+        return cell
+    }
+
+    /// As on the system's 九宫格, so nothing needs learning again.
+    private func buildGrid() {
+        letterCells = [KeyCell?](repeating: nil, count: 26)
+        geometry = nil
+        func add(_ title: String, _ action: Action, _ column: Int, _ row: Int, width: Int = 1, height: Int = 1) -> KeyCell {
+            let cell = makeCell(title, action)
+            grid.append((cell, column, row, width, height))
+            return cell
+        }
+        _ = add("123", .symbols, 0, 0)
+        _ = add("，。?！", .key(.punctuation), 1, 0)
+        _ = add("A B C", .key(.digit("2")), 2, 0)
+        _ = add("D E F", .key(.digit("3")), 3, 0)
+        _ = add("", .key(.backspace), 4, 0)
+        _ = add("#@¥", .moreSymbols, 0, 1)
+        _ = add("G H I", .key(.digit("4")), 1, 1)
+        _ = add("J K L", .key(.digit("5")), 2, 1)
+        _ = add("M N O", .key(.digit("6")), 3, 1)
+        separatorCell = add("", .key(.separator), 4, 1)
+        _ = add("英", .key(.language), 0, 2)
+        _ = add("P Q R S", .key(.digit("7")), 1, 2)
+        _ = add("T U V", .key(.digit("8")), 2, 2)
+        _ = add("W X Y Z", .key(.digit("9")), 3, 2)
+        returnCell = add("", .key(.returnKey), 4, 2, height: 2)
+        _ = add("", showsGlobe ? .globe : .key(.nextKeyboard), 0, 3)
+        _ = add("选拼音", .key(.nextSpelling), 1, 3)
+        spaceCell = add("", .key(.space), 2, 3, width: 2)
+        updateGridKeys()
+    }
+
+    private func placeGrid() {
+        let pitchX = (bounds.width - 2 * Self.gridSideMargin + Self.gap) / 5
+        let pitchY = (bounds.height - Self.topInset - Self.bottomInset + Self.gridRowGap) / 4
+        for key in grid {
+            key.cell.frame = CGRect(
+                x: Self.gridSideMargin + CGFloat(key.column) * pitchX,
+                y: Self.topInset + CGFloat(key.row) * pitchY,
+                width: CGFloat(key.width) * pitchX - Self.gap,
+                height: CGFloat(key.height) * pitchY - Self.gridRowGap
+            )
+        }
     }
 
     private func keys(_ text: String, weight: CGFloat = 1) -> [(String, Action, CGFloat)] {
@@ -226,6 +308,7 @@ final class KeyboardKeysView: UIView {
         case .key(.backspace): return "delete.left"
         case .key(.returnKey): return "return"
         case .globe: return "globe"
+        case .key(.nextKeyboard): return "face.smiling"
         default: return nil
         }
     }
@@ -234,13 +317,18 @@ final class KeyboardKeysView: UIView {
         if case .moreSymbols = action, title.count == 3, title != "123" { return .systemFont(ofSize: 15) }
         switch action {
         case .key(.text), .key(.literal): break
-        default: return .systemFont(ofSize: 18)
+        case .key(.digit): return .systemFont(ofSize: 17)
+        default: return .systemFont(ofSize: showsGrid ? 16 : 18)
         }
         return .systemFont(ofSize: symbols ? 23 : 25)
     }
 
     override func layoutSubviews() {
         super.layoutSubviews()
+        if showsGrid {
+            placeGrid()
+            return
+        }
         // Only the letter keyboard has the fifth row; the others share its full height.
         let numberRow = rows.count == 5 ? Self.numberRowHeight : 0
         let fullRows = CGFloat(max(rows.count - (numberRow > 0 ? 1 : 0), 1))
@@ -406,7 +494,7 @@ final class KeyboardKeysView: UIView {
         switch cell.action {
         case .key(.backspace):
             repeatTimer?.invalidate()
-        case .key(.text), .key(.literal), .key(.space):
+        case .key(.text), .key(.literal), .key(.space), .key(.digit):
             break
         case let .key(key):
             onKey?(key)
@@ -418,6 +506,7 @@ final class KeyboardKeysView: UIView {
             moreSymbols = false
             rebuild()
         case .moreSymbols:
+            if showsGrid { symbols = true }
             moreSymbols.toggle()
             rebuild()
         case .globe:
@@ -427,7 +516,7 @@ final class KeyboardKeysView: UIView {
     }
 
     private func showPopup(over cell: KeyCell) {
-        guard showsPopup, cell.icon == nil, cell.isLetterOrSpace, let text = cell.text, !text.isEmpty, text != "space" else { return }
+        guard showsPopup, !showsGrid, cell.icon == nil, cell.isLetterOrSpace, let text = cell.text, !text.isEmpty, text != "space" else { return }
         popup.text = text
         popup.backgroundColor = Self.letterKey
         popup.frame = CGRect(x: cell.frame.minX - 4, y: cell.frame.minY - cell.frame.height - 8, width: cell.frame.width + 8, height: cell.frame.height + 4)

@@ -58,6 +58,12 @@ public enum SharedSettings {
         set { defaults.set(newValue, forKey: "haptics") }
     }
 
+    /// Chinese is typed on 9 keys rather than 26.
+    public static var nineKey: Bool {
+        get { flag("nineKey", default: false) }
+        set { defaults.set(newValue, forKey: "nineKey") }
+    }
+
     public static var keySoundEnabled: Bool {
         get { flag("keySound", default: false) }
         set { defaults.set(newValue, forKey: "keySound") }

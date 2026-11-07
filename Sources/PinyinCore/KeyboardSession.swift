@@ -25,6 +25,8 @@ public final class KeyboardSession {
     private static let maxPredictions = 16
     private static let doubleSpaceWindow: TimeInterval = 0.7
     private static let contextCharacters = 16
+    private static let maxSpellings = 12
+    private static let punctuationOffer = ["，", "。", "？", "！", "、", "：", "；", "…", "“", "”", "（", "）"]
     private static let punctuation: [Character: String] = [
         ",": "，", ".": "。", "?": "？", "!": "！", ":": "：", ";": "；", "(": "（", ")": "）",
     ]
@@ -48,6 +50,17 @@ public final class KeyboardSession {
     public var doubleSpacePeriod = true
     /// Called whenever anything the bar shows has changed.
     public var onChange: (() -> Void)?
+    /// Chinese is typed as digits on 9 keys.
+    public var nineKey = false {
+        didSet { if nineKey != oldValue { commitRaw() } }
+    }
+    /// What the digits could spell, for the row above the candidates.
+    public private(set) var spellings: [String] = []
+    /// The spelling now locked, while the row can still change it.
+    public private(set) var spellingIndex: Int?
+    private var spellingBase: String?
+    private var nineKeyDisplay = ""
+    private var offersPunctuation = false
 
     private var lastSpace: Date?
     private var fix: Fix?
@@ -74,7 +87,15 @@ public final class KeyboardSession {
     private var waiting: Job?
     private var running: Int?
     /// Written on [decoding]; read on the main thread once that queue is known to be idle.
-    private var decoded: (id: Int, found: [PinyinEngine.Candidate], whole: Bool)?
+    private var decoded: (id: Int, reading: Reading)?
+
+    /// All one reading of the composition gives the keyboard.
+    private struct Reading {
+        var found: [PinyinEngine.Candidate]
+        var whole = false
+        var display = ""
+        var spellings: [String] = []
+    }
 
     /// With [decodesInBackground] typing never waits for the engine: letters show at once and the
     /// candidates follow. The engine, lexicon and learner are then touched by the main thread only
@@ -97,6 +118,7 @@ public final class KeyboardSession {
     /// The small line above the candidates.
     public var label: String {
         if let hint { return hint }
+        if nineKey, language == .chinese { return "" }
         if editCaret != nil { return candidates.first?.text ?? "" }
         if let fix {
             guard fix.part >= 0, let part = parts[safe: fix.part] else { return "点要改的词" }
@@ -109,18 +131,20 @@ public final class KeyboardSession {
 
     /// What the row of candidates lists now.
     public var items: [String] {
+        if offersPunctuation { return Self.punctuationOffer }
         if let fix { return fix.part < 0 ? parts.map(\.text) : fix.options.map(\.text) }
         return composing.isEmpty ? predictions.map(\.text) : candidates.map(\.text)
     }
 
     /// The 改词 button: shown for a sentence of two or more words, or to leave choosing.
-    public var canFix: Bool { fix != nil || (parts.count >= 2 && editCaret == nil) }
+    public var canFix: Bool { !nineKey && (fix != nil || (parts.count >= 2 && editCaret == nil)) }
 
     // MARK: Keys
 
     /// [tap] is how the touch fitted each letter key, and [sample] its record for the learner.
     public func type(_ character: Character, tap: [Float]? = nil, sample: TypingLearner.Sample? = nil) {
         lastSpace = nil
+        offersPunctuation = false
         guard language == .chinese else {
             target?.commitText(String(character))
             return
@@ -167,9 +191,62 @@ public final class KeyboardSession {
         changed()
     }
 
+    /// A digit key of the 9-key keyboard.
+    public func typeDigit(_ digit: Character) {
+        lastSpace = nil
+        offersPunctuation = false
+        englishRun = false
+        leaveSpelling()
+        update(composing + String(digit))
+    }
+
+    /// The 9-key keyboard's ^^ key: 分隔 inside a composition.
+    public func separator() {
+        leaveSpelling()
+        if isComposing {
+            if !composing.hasSuffix("'") { update(composing + "'") }
+        } else {
+            typeLiteral("^_^")
+        }
+    }
+
+    /// Locks spelling [index]; with nothing left to spell, another one can still replace it.
+    public func chooseSpelling(_ index: Int) {
+        settle()
+        guard let spelling = spellings[safe: index] else { return }
+        let base = spellingBase ?? composing
+        let locked = NineKey.lock(base, spelling)
+        guard locked != base else { return }
+        let finished = NineKey.isSpelled(locked)
+        spellingBase = finished ? base : nil
+        spellingIndex = finished ? index : nil
+        update(locked)
+    }
+
+    /// The 选拼音 key: the next spelling.
+    public func nextSpelling() {
+        settle()
+        if spellings.isEmpty { return }
+        chooseSpelling(((spellingIndex ?? -1) + 1) % spellings.count)
+    }
+
+    /// The marks key: lists them in the row of candidates.
+    public func offerPunctuation() {
+        if isComposing { commitWholeTop() }
+        offersPunctuation = true
+        predictions = []
+        changed()
+    }
+
+    private func leaveSpelling() {
+        spellingBase = nil
+        spellingIndex = nil
+    }
+
     /// [text] as it is, with no Chinese punctuation put in its place.
     public func typeLiteral(_ text: String) {
         lastSpace = nil
+        offersPunctuation = false
         englishRun = false
         if isComposing { commitWholeTop() }
         learner.breakChain()
@@ -180,6 +257,7 @@ public final class KeyboardSession {
 
     public func space() {
         settle()
+        offersPunctuation = false
         englishRun = false
         if editCaret != nil {
             editCaret = nil
@@ -205,6 +283,7 @@ public final class KeyboardSession {
     }
 
     public func backspace() {
+        offersPunctuation = false
         guard isComposing else {
             settle()
             englishRun = false
@@ -221,12 +300,18 @@ public final class KeyboardSession {
             }
             return
         }
-        update(String(composing.dropLast()))
+        if nineKey {
+            leaveSpelling()
+            update(NineKey.backspace(composing))
+        } else {
+            update(String(composing.dropLast()))
+        }
     }
 
     /// Return: the typed letters go in as they are; otherwise the host app's newline or send.
     public func returnKey() -> Bool {
         settle()
+        offersPunctuation = false
         englishRun = false
         guard isComposing else { return false }
         commitRaw()
@@ -235,6 +320,7 @@ public final class KeyboardSession {
 
     public func toggleLanguage() {
         settle()
+        offersPunctuation = false
         commitRaw()
         englishRun = false
         learner.breakChain()
@@ -257,7 +343,9 @@ public final class KeyboardSession {
     /// A tap on the row at [index], whatever it lists now.
     public func tapItem(_ index: Int) {
         settle()
-        if let current = fix {
+        if offersPunctuation {
+            if let mark = Self.punctuationOffer[safe: index] { typeLiteral(mark) }
+        } else if let current = fix {
             pickFix(current, index)
         } else if isComposing {
             select(index, byHand: true)
@@ -393,15 +481,17 @@ public final class KeyboardSession {
         composing = text
         if text.isEmpty {
             candidates = []
+            spellings = []
+            leaveSpelling()
             target?.setMarkedText("")
         } else {
-            target?.setMarkedText(text)
+            // 9-key digits show as the pinyin they spell, once that is worked out.
+            if !nineKey { target?.setMarkedText(text) }
             predictions = []
             nextJob += 1
             let job = Job(id: nextJob, text: text, before: learner.context ?? fieldContext, taps: taps.snapshot)
             if decoding == nil {
-                let found = engine.candidates(text, before: job.before, taps: job.taps)
-                show(found, whole: PinyinEngine.isWholePinyin(text, lexicon))
+                show(read(job))
                 changed()
                 return
             }
@@ -416,28 +506,46 @@ public final class KeyboardSession {
     private func start(_ job: Job) {
         running = job.id
         decoding?.async { [self] in
-            let found = engine.candidates(job.text, before: job.before, taps: job.taps)
-            let whole = PinyinEngine.isWholePinyin(job.text, lexicon)
-            decoded = (job.id, found, whole)
-            DispatchQueue.main.async { [self] in finished(job.id, found, whole) }
+            let reading = read(job)
+            decoded = (job.id, reading)
+            DispatchQueue.main.async { [self] in finished(job.id, reading) }
         }
     }
 
-    private func finished(_ id: Int, _ found: [PinyinEngine.Candidate], _ whole: Bool) {
+    private func read(_ job: Job) -> Reading {
+        guard nineKey else {
+            return Reading(found: engine.candidates(job.text, before: job.before, taps: job.taps), whole: PinyinEngine.isWholePinyin(job.text, lexicon))
+        }
+        let found = engine.nineKeyCandidates(job.text, before: job.before)
+        return Reading(
+            found: found,
+            display: NineKey.display(job.text, lexicon, top: found.first),
+            spellings: Array(NineKey.spellings(job.text, lexicon).prefix(Self.maxSpellings))
+        )
+    }
+
+    private func finished(_ id: Int, _ reading: Reading) {
         guard running == id else { return }
         running = nil
         guard let job = waiting else { return }
         if job.id == id {
             waiting = nil
-            show(found, whole: whole)
+            show(reading)
             changed()
         } else {
             start(job)
         }
     }
 
-    private func show(_ found: [PinyinEngine.Candidate], whole: Bool) {
-        candidates = english?.merge(composing, found, whole: whole) ?? found
+    private func show(_ reading: Reading) {
+        guard nineKey else {
+            candidates = english?.merge(composing, reading.found, whole: reading.whole) ?? reading.found
+            return
+        }
+        candidates = reading.found
+        nineKeyDisplay = reading.display
+        if spellingBase == nil { spellings = reading.spellings }
+        target?.setMarkedText(reading.display)
     }
 
     /// Waits for the engine and brings the candidates up to the letters typed, so what follows
@@ -448,9 +556,9 @@ public final class KeyboardSession {
         guard let job = waiting else { return }
         waiting = nil
         if let done = decoded, done.id == job.id {
-            show(done.found, whole: done.whole)
+            show(done.reading)
         } else {
-            show(engine.candidates(job.text, before: job.before, taps: job.taps), whole: PinyinEngine.isWholePinyin(job.text, lexicon))
+            show(read(job))
         }
     }
 
@@ -463,11 +571,12 @@ public final class KeyboardSession {
         expanded = false
         let letters = Array(composing)
         // A reading that took a tap as another key teaches the touch model that key (wl → wo).
-        if let spelling = candidate.spelling {
+        if !nineKey, let spelling = candidate.spelling {
             for (at, letter) in PinyinTapBuffer.substitutions(String(letters.prefix(candidate.consumed)), spelling) {
                 if let sample = taps.token(at: at) { touchLearner?.correct(sample, Int(letter) - 97) }
             }
         }
+        leaveSpelling()
         var rest = letters.dropFirst(min(candidate.consumed, letters.count))
         while rest.first == "'" { rest = rest.dropFirst() }
         let isEnglish = candidate.id == PinyinEngine.englishId
@@ -487,6 +596,7 @@ public final class KeyboardSession {
             taps.follow(composing, "", tap: nil, token: nil)
             composing = ""
             candidates = []
+            spellings = []
             predictions = learner.predictions(limit: Self.maxPredictions)
             changed()
         } else {
@@ -510,11 +620,13 @@ public final class KeyboardSession {
     private func commitRaw() {
         settle()
         guard isComposing else { return }
-        target?.commitText(composing.replacingOccurrences(of: "'", with: ""))
+        target?.commitText((nineKey ? nineKeyDisplay : composing).replacingOccurrences(of: "'", with: ""))
         learner.onCompositionAbandoned()
         taps.follow(composing, "", tap: nil, token: nil)
         composing = ""
         candidates = []
+        spellings = []
+        leaveSpelling()
         predictions = []
         fix = nil
         editCaret = nil

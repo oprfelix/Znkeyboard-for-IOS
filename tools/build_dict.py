@@ -4,10 +4,13 @@
 The keyboard extension has little memory, so the dictionary is one read-only file mapped into
 memory and nothing is parsed into objects. Little-endian, 4-byte aligned sections:
 
-  header: "ZNDB", version, rows, syllables, words, dict.tsv rows, ln of all weights (f32)
+  header: "ZNDB", version, rows, syllables, words, dict.tsv rows, ln of all weights (f32),
+  rows of two or more syllables
   text offsets (rows + 1, u32), syllable offsets (rows + 1, u32), word ids (rows, i32),
   scores (rows, f32), rows by text (rows, u32: for prefix searches), flags (rows, u8: 1 = trade
-  word), syllable ids (u16), initials (u8), text (UTF-8), syllable names (\\n-joined)
+  word), syllable ids (u16), initials (u8), text (UTF-8), rows by 9-key code, best first (rows,
+  u32), rows of two or more syllables by the code of their initials, best first (u32), syllable
+  names (\\n-joined)
 
 Rows are sorted by their initials, then best first, so a binary search finds the words for any
 initials and the first match is the best. Word ids are distinct dict.tsv texts in file order, the
@@ -55,8 +58,19 @@ for row in rows:
 def pad(data):
     return bytes(data) + b"\0" * (-len(data) % 4)
 
+KEYS = {letter: str(digit) for digit, letters in
+        enumerate(("abc", "def", "ghi", "jkl", "mno", "pqrs", "tuv", "wxyz"), 2) for letter in letters}
+
+
+def code(text):
+    return "".join(KEYS[c] for c in text)
+
+
 n = len(rows)
-out = struct.pack("<4sIIIIIf", b"ZNDB", 3, n, len(names), len(ids), dict_rows, math.log(total))
+by_code = sorted(range(n), key=lambda i: (code("".join(rows[i][1])), -rows[i][2], rows[i][5]))
+several = [i for i in range(n) if len(rows[i][1]) >= 2]
+by_initials_code = sorted(several, key=lambda i: (code("".join(s[0] for s in rows[i][1])), -rows[i][2], rows[i][5]))
+out = struct.pack("<4sIIIIIfI", b"ZNDB", 4, n, len(names), len(ids), dict_rows, math.log(total), len(several))
 out += struct.pack(f"<{n + 1}I", *text_offsets)
 out += struct.pack(f"<{n + 1}I", *syllable_offsets)
 out += struct.pack(f"<{n}i", *[r[3] for r in rows])
@@ -67,6 +81,8 @@ out += pad(bytes(r[4] for r in rows))
 out += pad(struct.pack(f"<{len(syllables)}H", *syllables))
 out += pad(initials)
 out += pad(text)
+out += struct.pack(f"<{n}I", *by_code)
+out += struct.pack(f"<{len(several)}I", *by_initials_code)
 out += "\n".join(names).encode()
 open(out_path, "wb").write(out)
 print(f"{n} rows, {len(names)} syllables, {len(ids)} words, {len(out) / 1e6:.1f} MB")

@@ -56,6 +56,20 @@ public final class PinyinEngine {
         return withInitialWords(input, withSentences(whole, words, length), before)
     }
 
+    /// [composing] read as 9-key: as a whole sentence first, when nothing is locked or separated,
+    /// then as words.
+    public func nineKeyCandidates(_ composing: String, before: SentenceDecoder.Context? = nil) -> [Candidate] {
+        let parsed = NineKey.Parsed(composing)
+        let words = lexicon.nineKeyMatches(locked: parsed.locked, digits: parsed.digits, boundaries: parsed.boundaries).map { match in
+            Candidate(text: match.word.text, consumed: NineKey.consumed(composing, parsed, digits: match.digits), syllables: match.word.syllables, parts: nil, spelling: nil, id: match.word.id)
+        }
+        if !parsed.locked.isEmpty || !parsed.boundaries.isEmpty { return words }
+        let limit = lexicon.model == nil ? 1 : C.maxSentences
+        let sentences = decoder.decodeNineKey(parsed.digits, before: before, limit: limit)
+        if sentences.isEmpty { return words }
+        return withSentences(sentences.map { Self.wholeInput($0, composing.utf8.count) }, words, composing.utf8.count)
+    }
+
     /// Other words that read like [part] of a sentence, best first, to swap it for.
     public func alternatives(_ part: Word) -> [Word] {
         lexicon.matches(part.syllables.map { LexiconPiece($0, isPrefix: false) }, limit: Self.alternativesLimit)

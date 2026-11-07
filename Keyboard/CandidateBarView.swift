@@ -41,6 +41,7 @@ final class CandidateBarView: UIView, UIScrollViewDelegate {
         scroller.showsHorizontalScrollIndicator = false
         scroller.delegate = self
         scroller.delaysContentTouches = false
+        scroller.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(itemTapped)))
         fixWidth = fix.widthAnchor.constraint(equalToConstant: 0)
         fixWidth.isActive = true
         fix.titleLabel?.font = .systemFont(ofSize: 15)
@@ -53,13 +54,17 @@ final class CandidateBarView: UIView, UIScrollViewDelegate {
             item.translatesAutoresizingMaskIntoConstraints = false
             addSubview(item)
         }
-        for (button, title) in [(polish, "润色"), (translate, "翻译")] {
+        for (button, title, symbol) in [(polish, "润色", "wand.and.stars"), (translate, "翻译", "translate")] {
             button.setTitle(title, for: .normal)
             styleTool(button)
+            styleAI(button, symbol: symbol)
         }
         polish.addTarget(self, action: #selector(polishTapped), for: .touchUpInside)
         translate.addTarget(self, action: #selector(translateTapped), for: .touchUpInside)
         styleTool(offer)
+        // Copied text waits for an answer, so this is the one solid button.
+        offer.setTitleColor(.white, for: .normal)
+        offer.backgroundColor = .systemBlue
         offer.contentHorizontalAlignment = .leading
         offer.titleLabel?.lineBreakMode = .byTruncatingTail
         offer.addTarget(self, action: #selector(offerTapped), for: .touchUpInside)
@@ -124,6 +129,12 @@ final class CandidateBarView: UIView, UIScrollViewDelegate {
         layoutIfNeeded()
         placeItems()
     }
+
+    /// The 9-key keyboard spells in its own row, so the candidates take all of this one.
+    var showsLabel = true {
+        didSet { labelHeight.isActive = !showsLabel }
+    }
+    private lazy var labelHeight = label.heightAnchor.constraint(equalToConstant: 0)
 
     func clearLabel() { label.text = "" }
 
@@ -192,8 +203,8 @@ final class CandidateBarView: UIView, UIScrollViewDelegate {
         let button = UIButton(type: .custom)
         button.tag = index
         button.setTitleColor(.label, for: .normal)
-        button.setTitleColor(.secondaryLabel, for: .highlighted)
-        button.addTarget(self, action: #selector(itemTapped), for: .touchUpInside)
+        // The row takes the touches, or a quick flick that lands on a word would not scroll it.
+        button.isUserInteractionEnabled = false
         buttons.append(button)
         scroller.addSubview(button)
         return button
@@ -226,11 +237,25 @@ final class CandidateBarView: UIView, UIScrollViewDelegate {
         button.contentEdgeInsets = UIEdgeInsets(top: 0, left: 12, bottom: 0, right: 12)
     }
 
+    /// The AI tools are tinted, so they don't read as keys that type something.
+    private func styleAI(_ button: UIButton, symbol: String) {
+        button.tintColor = .systemBlue
+        button.setTitleColor(.systemBlue, for: .normal)
+        button.backgroundColor = UIColor.systemBlue.withAlphaComponent(0.15)
+        button.setImage(UIImage(systemName: symbol, withConfiguration: UIImage.SymbolConfiguration(pointSize: 13, weight: .regular)), for: .normal)
+        button.contentEdgeInsets = UIEdgeInsets(top: 0, left: 10, bottom: 0, right: 14)
+        button.titleEdgeInsets = UIEdgeInsets(top: 0, left: 4, bottom: 0, right: -4)
+    }
+
     @objc private func polishTapped() { onPolish?() }
     @objc private func translateTapped() { onTranslate?() }
     @objc private func offerTapped() { onOffer?() }
     @objc private func offerCloseTapped() { onDismissOffer?() }
-    @objc private func itemTapped(_ sender: UIButton) { onTap?(sender.tag) }
+    @objc private func itemTapped(_ tap: UITapGestureRecognizer) {
+        let x = tap.location(in: scroller).x
+        if let index = buttons.prefix(placed).firstIndex(where: { $0.frame.minX <= x && x < $0.frame.maxX + 2 }) { onTap?(index) }
+    }
+
     @objc private func fixTapped() { onFix?() }
     @objc private func expandTapped() { onExpand?() }
 

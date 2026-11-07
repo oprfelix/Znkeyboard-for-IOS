@@ -8,6 +8,7 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
     private let typing = AdaptiveTyping()
     private var afterConsent: (() -> Void)?
     private let bar = CandidateBarView()
+    private let spellingRow = SpellingRowView()
     private var session: KeyboardSession?
     private var heightConstraint: NSLayoutConstraint?
     private var hasMarkedText = false
@@ -24,24 +25,32 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
     private var request: Task<Void, Never>?
     private let client = AIClient()
     private static let barHeight: CGFloat = 48
+    private static let spellingHeight: CGFloat = 38
     private var barHeight: NSLayoutConstraint!
+    private var spellingRowHeight: NSLayoutConstraint!
     private var keysHeight: CGFloat { keys.preferredHeight }
-    private var keyboardHeight: CGFloat { Self.barHeight + keysHeight }
+    private var spellingSize: CGFloat { keys.nineKey && session?.language != .english ? Self.spellingHeight : 0 }
+    private var keyboardHeight: CGFloat { Self.barHeight + keysHeight + spellingSize }
 
     override func viewDidLoad() {
         super.viewDidLoad()
         guard let root = view else { return }
         root.isMultipleTouchEnabled = true
-        for item in [card, bar, keys, grid] as [UIView] {
+        for item in [card, spellingRow, bar, keys, grid] as [UIView] {
             item.translatesAutoresizingMaskIntoConstraints = false
             root.addSubview(item)
         }
         barHeight = bar.heightAnchor.constraint(equalToConstant: Self.barHeight)
+        spellingRowHeight = spellingRow.heightAnchor.constraint(equalToConstant: 0)
         NSLayoutConstraint.activate([
             card.topAnchor.constraint(equalTo: root.topAnchor),
             card.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             card.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            bar.topAnchor.constraint(equalTo: card.bottomAnchor),
+            spellingRow.topAnchor.constraint(equalTo: card.bottomAnchor),
+            spellingRow.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            spellingRow.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            spellingRowHeight,
+            bar.topAnchor.constraint(equalTo: spellingRow.bottomAnchor),
             bar.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             bar.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             barHeight,
@@ -56,6 +65,7 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
         ])
         grid.isHidden = true
         grid.onTap = { [weak self] index in self?.session?.tapItem(index) }
+        spellingRow.onTap = { [weak self] index in self?.session?.chooseSpelling(index) }
         bar.onExpand = { [weak self] in self?.session?.toggleExpanded() }
         cardHeight = card.heightAnchor.constraint(equalToConstant: 0)
         cardHeight.isActive = true
@@ -98,6 +108,8 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
         keys.playsSound = hasFullAccess && SharedSettings.keySoundEnabled
         keys.showsPopup = SharedSettings.keyPopupEnabled
         keys.showsNumberRow = SharedSettings.numberRow
+        keys.nineKey = SharedSettings.nineKey
+        session?.nineKey = SharedSettings.nineKey
         typing.adaptiveEnabled = SharedSettings.adaptiveTouch
         if engineRules != SharedSettings.fuzzyRules {
             saveLearning()
@@ -222,6 +234,10 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
         case .returnKey:
             typing.learner.onCommitted("\n", nil)
             if !session.returnKey() { textDocumentProxy.insertText("\n") }
+        case let .digit(digit): session.typeDigit(digit)
+        case .punctuation: session.offerPunctuation()
+        case .separator: session.separator()
+        case .nextSpelling: session.nextSpelling()
         case .language: session.toggleLanguage()
         case .nextKeyboard: advanceToNextInputMode()
         }
@@ -240,6 +256,9 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
             return
         }
         layoutCard()
+        bar.showsLabel = spellingSize == 0
+        spellingRow.show(session.spellings, selected: session.spellingIndex)
+        keys.setComposing(session.isComposing)
         let expanded = session.expanded && !session.items.isEmpty
         if expanded { grid.show(session.items) }
         grid.isHidden = !expanded
@@ -326,7 +345,8 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
         let cardSize = showing
             ? card.systemLayoutSizeFitting(CGSize(width: view.bounds.width, height: 0), withHorizontalFittingPriority: .required, verticalFittingPriority: .fittingSizeLevel).height
             : 0
-        let height = keysHeight + barSize + cardSize
+        if spellingRowHeight.constant != spellingSize { spellingRowHeight.constant = spellingSize }
+        let height = keysHeight + barSize + cardSize + spellingSize
         if heightConstraint?.constant != height { heightConstraint?.constant = height }
     }
 

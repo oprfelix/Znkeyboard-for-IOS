@@ -218,6 +218,7 @@ struct SetupView: View {
     @State private var autoCapitalize = SharedSettings.autoCapitalize
     @State private var doubleSpace = SharedSettings.doubleSpacePeriod
     @State private var numberRow = SharedSettings.numberRow
+    @State private var nineKey = SharedSettings.nineKey
     @State private var adaptiveTouch = SharedSettings.adaptiveTouch
     @State private var models: [String] = []
     @State private var fullAccess = false
@@ -305,6 +306,7 @@ struct SetupView: View {
         page {
             pageTitle("键盘")
             tryIt
+            layout
             fuzzy
             feel
         }
@@ -540,6 +542,21 @@ struct SetupView: View {
                     .font(.footnote)
                     .foregroundStyle(status.ok ? .green : .red)
             }
+        }
+    }
+
+    private var layout: some View {
+        Card(title: "中文键盘", symbol: "square.grid.3x3") {
+            Menu {
+                Picker("键盘布局", selection: $nineKey) {
+                    Text("全键盘").tag(false)
+                    Text("九宫格").tag(true)
+                }
+            } label: {
+                dropdown("键盘布局", nineKey ? "九宫格" : "全键盘")
+            }
+            .buttonStyle(.plain)
+            .onChange(of: nineKey) { SharedSettings.nineKey = $0 }
         }
     }
 

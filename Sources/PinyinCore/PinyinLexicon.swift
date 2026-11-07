@@ -76,6 +76,8 @@ public final class PinyinLexicon {
     private let normalizedIndex: [String: Int]
     private let syllableIndex: [String: Int]
     private var fitCache: [String: [Bool]] = [:]
+    private var nineKeyWordCache: [String: [(match: Match, byInitials: Bool)]] = [:]
+    private var nineKeyVersion = -1
 
     /// What the user's picks changed: dictionary rows, and phrases the dictionary lacks.
     private struct Learned {
@@ -273,12 +275,7 @@ public final class PinyinLexicon {
             let ids = built[index].raw.map { syllableIndex[$0] ?? 0 }
             if pieces.indices.allSatisfy({ fits[$0][ids[$0]] }) { found.append(-1 - index) }
         }
-        func value(_ hit: Int) -> Float { hit >= 0 ? score(hit) : built[-1 - hit].score }
-        func order(_ hit: Int) -> Int { hit >= 0 ? hit : Int.max / 2 - hit }
-        found.sort { a, b in
-            let x = value(a), y = value(b)
-            return x != y ? x > y : order(a) < order(b)
-        }
+        found.sort(by: isBetter)
         if pieces.contains(where: \.isPrefix) {
             let last = pieces.count - 1
             func exactLast(_ hit: Int) -> Bool {
@@ -287,21 +284,190 @@ public final class PinyinLexicon {
             }
             found = found.filter(exactLast) + found.filter { !exactLast($0) }
         }
-        return found.prefix(limit).map { hit in
-            if hit < 0 {
-                let item = built[-1 - hit]
-                return Match(word: Word(text: item.text, syllables: item.raw, id: -1, trade: false), score: item.score, learned: item.score - Self.newWordBase, uses: item.uses)
-            }
-            let base = dictionary.score(at: hit)
-            let known = learnedRows[hit]
-            return Match(
-                word: Word(text: dictionary.text(at: hit), syllables: dictionary.syllables(at: hit), id: dictionary.wordId(at: hit), trade: dictionary.isTrade(at: hit)),
-                score: known?.score ?? base,
-                learned: (known?.score ?? base) - base,
-                uses: known?.uses ?? 0
-            )
-        }
+        return found.prefix(limit).map(match)
     }
+
+    private func isBetter(_ a: Int, _ b: Int) -> Bool {
+        func value(_ hit: Int) -> Float { hit >= 0 ? score(hit) : built[-1 - hit].score }
+        func order(_ hit: Int) -> Int { hit >= 0 ? hit : Int.max / 2 - hit }
+        let x = value(a), y = value(b)
+        return x != y ? x > y : order(a) < order(b)
+    }
+
+    private func match(_ hit: Int) -> Match {
+        if hit < 0 {
+            let item = built[-1 - hit]
+            return Match(word: Word(text: item.text, syllables: item.raw, id: -1, trade: false), score: item.score, learned: item.score - Self.newWordBase, uses: item.uses)
+        }
+        let base = dictionary.score(at: hit)
+        let known = learnedRows[hit]
+        return Match(
+            word: Word(text: dictionary.text(at: hit), syllables: dictionary.syllables(at: hit), id: dictionary.wordId(at: hit), trade: dictionary.isTrade(at: hit)),
+            score: known?.score ?? base,
+            learned: (known?.score ?? base) - base,
+            uses: known?.uses ?? 0
+        )
+    }
+
+    // MARK: 9-key
+
+    /// Hits for a 9-key code, best first: dictionary rows, and phrases the user built.
+    private func codeHits(_ code: [UInt8], initials: Bool) -> [Int] {
+        var hits = initials ? dictionary.rows(initialsCode: code) : dictionary.rows(code: code)
+        let typed = String(decoding: code, as: UTF8.self)
+        var moved = !learnedRows.isEmpty
+        for index in built.indices {
+            let raw = built[index].raw
+            if initials ? raw.count < 2 : false { continue }
+            if NineKey.code(initials ? raw.map { String($0.prefix(1)) }.joined() : raw.joined()) == typed {
+                hits.append(-1 - index)
+                moved = true
+            }
+        }
+        if moved { hits.sort(by: isBetter) }
+        return hits
+    }
+
+    private func rawSyllables(_ hit: Int) -> [String] { hit >= 0 ? dictionary.syllables(at: hit) : built[-1 - hit].raw }
+
+    /// The best [limit] words whose 9-key code is [digits], then the best [limit] whose 简拼 is.
+    func nineKeyWords(_ digits: String, limit: Int) -> [(match: Match, byInitials: Bool)] {
+        if nineKeyVersion != version || nineKeyWordCache.count > Self.maxNineKeyCache {
+            nineKeyWordCache.removeAll()
+            nineKeyVersion = version
+        }
+        let key = "\(digits)/\(limit)"
+        if let known = nineKeyWordCache[key] { return known }
+        let code = Array(digits.utf8)
+        let full = codeHits(code, initials: false).prefix(limit).map { (match: match($0), byInitials: false) }
+        let short = codeHits(code, initials: true).prefix(limit).map { (match: match($0), byInitials: true) }
+        let found = full + short
+        nineKeyWordCache[key] = found
+        return found
+    }
+
+    /// Words for 9-key input: [locked] syllables picked from the spelling list, then [digits]
+    /// (2–9). [boundaries] are digit offsets of typed separators, where a word must split. Best
+    /// first: words using every digit, the last syllable maybe still being typed, then 简拼, then
+    /// words using a leading part of the digits. [digits] on each is how many it uses.
+    func nineKeyMatches(locked: [String], digits: String, boundaries: Set<Int>) -> [(word: Word, digits: Int)] {
+        let lockedCode = NineKey.code(locked.joined())
+        let lockedNormalized = locked.map(fuzzy.normalize)
+        let typed = Array(digits)
+        var seen = Set<String>()
+        var result: [(word: Word, digits: Int)] = []
+
+        func fits(_ raw: [String], _ used: Int) -> Bool {
+            if raw.count <= locked.count && used > 0 { return false }
+            for (index, syllable) in lockedNormalized.enumerated() where index >= raw.count || fuzzy.normalize(raw[index]) != syllable { return false }
+            if boundaries.isEmpty { return true }
+            var ends = Set<Int>()
+            var at = -lockedCode.utf8.count
+            for syllable in raw {
+                at += syllable.utf8.count
+                if at > 0 { ends.insert(at) }
+            }
+            return !boundaries.contains { $0 >= 1 && $0 < used && !ends.contains($0) }
+        }
+
+        func take(_ hits: [Int], _ used: Int, _ limit: Int) {
+            var added = 0
+            for hit in hits {
+                if added >= limit { break }
+                let found = match(hit).word
+                if seen.insert(found.text).inserted {
+                    result.append((found, used))
+                    added += 1
+                }
+            }
+        }
+
+        // Every digit used. When that only spells single characters (64 → 你, 米…), 简拼 words
+        // (64 → 你好) come after the first few rather than after all of them.
+        let whole = codeHits(Array((lockedCode + digits).utf8), initials: false).filter { fits(rawSyllables($0), typed.count) }
+        let singlesOnly = locked.isEmpty && !whole.isEmpty && whole.allSatisfy { rawSyllables($0).count == 1 }
+        let short = locked.isEmpty && typed.count >= 2 ? codeHits(Array(digits.utf8), initials: true) : []
+        if singlesOnly && typed.count >= 2 {
+            take(whole, typed.count, Self.singlesBeforeInitials)
+            take(short, typed.count, Self.initialsLimit)
+        }
+        take(whole, typed.count, Self.fullLimit)
+        // The last syllable still being typed: complete it from every syllable code it starts.
+        var growing: [Int] = []
+        if typed.count >= 1 {
+            for split in stride(from: typed.count - 1, through: max(0, typed.count - Self.maxCodeLength + 1), by: -1) {
+                let tail = String(typed[split...])
+                let head = lockedCode + String(typed[..<split])
+                for code in syllablesByCode.keys where code.utf8.count > tail.utf8.count && code.hasPrefix(tail) {
+                    for hit in codeHits(Array((head + code).utf8), initials: false) {
+                        let raw = rawSyllables(hit)
+                        if NineKey.code(raw.last!) == code && fits(raw, typed.count) { growing.append(hit) }
+                    }
+                }
+            }
+        }
+        take(growing.sorted(by: isBetter), typed.count, Self.fullLimit)
+        take(short, typed.count, Self.initialsLimit)
+        // A leading part of the digits; the rest stays for the next pick.
+        if typed.count >= 2 {
+            for used in stride(from: typed.count - 1, through: 1, by: -1) {
+                let hits = codeHits(Array((lockedCode + String(typed[..<used])).utf8), initials: false).filter { fits(rawSyllables($0), used) }
+                take(hits, used, used <= Self.maxCodeLength ? Self.singleLimit : Self.partialLimit)
+            }
+        }
+        // Everything locked and nothing typed after it.
+        if typed.isEmpty && !locked.isEmpty {
+            let hits = codeHits(Array(lockedCode.utf8), initials: false).filter { rawSyllables($0).count == locked.count && fits(rawSyllables($0), 0) }
+            take(hits, 0, Self.fullLimit)
+        }
+        return result
+    }
+
+    /// Syllables a run of digits can start with, longest and most used first, then its letters.
+    func nineKeySpellings(_ digits: String) -> [String] {
+        if digits.isEmpty { return [] }
+        let typed = Array(digits)
+        var result: [String] = []
+        for length in stride(from: min(Self.maxCodeLength, typed.count), through: 1, by: -1) {
+            result += syllablesByCode[String(typed[..<length])] ?? []
+        }
+        for letter in NineKey.letters(of: typed[0]) where !result.contains(letter) { result.append(letter) }
+        return result
+    }
+
+    /// The likeliest pinyin for [digits], for showing what is being typed (ni'hao for 64426).
+    func nineKeySpell(_ digits: String) -> [String] {
+        let typed = Array(digits)
+        var result: [String] = []
+        var at = 0
+        while at < typed.count, let spelling = nineKeySpellings(String(typed[at...])).first {
+            result.append(spelling)
+            at += spelling.utf8.count
+        }
+        return result
+    }
+
+    /// Code → syllables with it, most used first, by the best single character of each.
+    private lazy var syllablesByCode: [String: [String]] = {
+        var best: [String: Float] = [:]
+        for initial in Set(rawNames.compactMap(\.utf8.first)) {
+            for row in dictionary.rows(initials: [initial]) {
+                let name = rawNames[Int(dictionary.syllableIds(at: row)[0])]
+                if best[name] == nil { best[name] = dictionary.score(at: row) }
+            }
+        }
+        return Dictionary(grouping: best.keys, by: NineKey.code).mapValues { names in
+            names.sorted { best[$0]! != best[$1]! ? best[$0]! > best[$1]! : $0 < $1 }
+        }
+    }()
+
+    private static let maxNineKeyCache = 3000
+    private static let fullLimit = 30
+    private static let initialsLimit = 10
+    private static let singlesBeforeInitials = 6
+    private static let partialLimit = 8
+    private static let singleLimit = 40
+    private static let maxCodeLength = 6
 
     private static let learnBonus: Float = 4
     private static let maxContextWord = 6
