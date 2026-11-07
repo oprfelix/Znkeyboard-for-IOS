@@ -430,10 +430,19 @@ struct SetupView: View {
         }
     }
 
+    /// Where to get a key, as on the Mac.
+    private var keyGuide: (title: String, url: URL)? {
+        switch kind {
+        case .deepSeek: return ("在 DeepSeek 开放平台获取", URL(string: "https://platform.deepseek.com/api_keys")!)
+        case .gemini: return ("在 Google AI Studio 免费获取", URL(string: "https://aistudio.google.com/apikey")!)
+        case .openAICompatible: return nil
+        }
+    }
+
     private func providerName(_ kind: AIProviderKind) -> String {
         switch kind {
         case .deepSeek: return "DeepSeek"
-        case .gemini: return "Gemini"
+        case .gemini: return "Google Gemini"
         case .openAICompatible: return "自定义"
         }
     }
@@ -507,6 +516,13 @@ struct SetupView: View {
                 }
                 // Here, not on the field: the field leaves the page once the key is hidden.
                 .onChange(of: apiKey) { SharedSettings.apiKey = $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            }
+            if apiKey.isEmpty, let guide = keyGuide {
+                HStack(spacing: 4) {
+                    Text("还没有 Key？").foregroundStyle(.secondary)
+                    Link(guide.title + " ↗", destination: guide.url)
+                }
+                .font(.footnote)
             }
             if kind == .openAICompatible && models.isEmpty {
                 InputBox {
