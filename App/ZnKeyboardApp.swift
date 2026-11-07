@@ -255,13 +255,21 @@ struct SetupView: View {
                 .padding(.bottom, 24)
         }
         .scrollDismissesKeyboard(.interactively)
-        .background(background.ignoresSafeArea())
-        // Content scrolls under the status bar, not through it.
+        .background(Color(.systemGroupedBackground).ignoresSafeArea())
+        // Content fades out under the status bar, with no edge to see, however far it is pulled.
         .overlay(alignment: .top) {
             GeometryReader { proxy in
-                Rectangle().fill(.ultraThinMaterial)
-                    .frame(height: proxy.safeAreaInsets.top)
-                    .ignoresSafeArea(edges: .top)
+                LinearGradient(
+                    stops: [
+                        .init(color: Color(.systemGroupedBackground), location: 0.6),
+                        .init(color: Color(.systemGroupedBackground).opacity(0), location: 1),
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .frame(height: proxy.safeAreaInsets.top + 16)
+                .ignoresSafeArea(edges: .top)
+                .allowsHitTesting(false)
             }
             .frame(height: 0)
         }
@@ -363,11 +371,6 @@ struct SetupView: View {
         try? await Task.sleep(nanoseconds: 600_000_000)
         guard !Task.isCancelled, let found = try? await AIClient().models(SharedSettings.provider), !Task.isCancelled else { return }
         models = found
-    }
-
-    private var background: some View {
-        LinearGradient(colors: [Brand.blue.opacity(0.14), Color(.systemGroupedBackground)], startPoint: .top, endPoint: .init(x: 0.5, y: 0.35))
-            .background(Color(.systemGroupedBackground))
     }
 
     private var header: some View {

@@ -24,6 +24,7 @@ final class CandidateBarView: UIView, UIScrollViewDelegate {
     private var expandShownUp: Bool?
     private var buttons: [UIButton] = []
     private var items: [String] = []
+    private var selectedItem: Int?
     private var placed = 0
     private var rowEnd: CGFloat = 0
     private var placedSize = CGSize.zero
@@ -115,7 +116,8 @@ final class CandidateBarView: UIView, UIScrollViewDelegate {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("no storyboards") }
 
-    func show(label text: String, items: [String], fixTitle: String?, expanded: Bool) {
+    func show(label text: String, items: [String], fixTitle: String?, expanded: Bool, selected: Int? = nil) {
+        selectedItem = selected
         tools.isHidden = true
         label.isHidden = false
         scroller.isHidden = false
@@ -189,7 +191,10 @@ final class CandidateBarView: UIView, UIScrollViewDelegate {
             if button.title(for: .normal) != text { button.setTitle(text, for: .normal) }
             if button.titleLabel?.font !== font { button.titleLabel?.font = font }
             let width = ceil((text as NSString).size(withAttributes: [.font: font]).width) + Self.itemPadding
-            button.frame = CGRect(x: rowEnd, y: 0, width: width, height: placedSize.height)
+            let selected = placed == selectedItem
+            let inset = selected ? Self.selectedInset : 0
+            button.frame = CGRect(x: rowEnd, y: inset, width: width, height: placedSize.height - 2 * inset)
+            button.backgroundColor = selected ? KeyboardKeysView.letterKey : .clear
             button.isHidden = false
             rowEnd += width + 2
             placed += 1
@@ -205,6 +210,7 @@ final class CandidateBarView: UIView, UIScrollViewDelegate {
         button.setTitleColor(.label, for: .normal)
         // The row takes the touches, or a quick flick that lands on a word would not scroll it.
         button.isUserInteractionEnabled = false
+        button.layer.cornerRadius = 8
         buttons.append(button)
         scroller.addSubview(button)
         return button
@@ -260,6 +266,7 @@ final class CandidateBarView: UIView, UIScrollViewDelegate {
     @objc private func expandTapped() { onExpand?() }
 
     private static let maxShown = 40
+    private static let selectedInset: CGFloat = 7
     private static let screensAhead: CGFloat = 2
     private static let itemPadding: CGFloat = 20
     private static let itemFont = UIFont.systemFont(ofSize: 20)

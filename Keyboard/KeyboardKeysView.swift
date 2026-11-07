@@ -7,11 +7,18 @@ import UIKit
 final class KeyboardKeysView: UIView {
     enum Key {
         case text(String), literal(String), space, backspace, returnKey, language, nextKeyboard
-        case digit(Character), punctuation, separator, nextSpelling
+        case digit(Character), punctuation, separator, nextSpelling, emoji
+        /// An English 9-key key: taps in a row step through its letters.
+        case letters(String)
     }
 
     private enum Action {
-        case key(Key), shift, symbols, moreSymbols, globe
+        case key(Key), shift, symbols, moreSymbols, globe, grid(GridPage)
+    }
+
+    /// The 9-key keyboard's own pages, so nothing falls back to the 26 keys.
+    private enum GridPage {
+        case main, numbers, marks(Int)
     }
 
     private final class KeyCell: UILabel {
@@ -30,9 +37,14 @@ final class KeyboardKeysView: UIView {
 
         var isLetterOrSpace: Bool {
             switch action {
-            case .key(.text), .key(.literal), .key(.space), .key(.digit): return true
+            case .key(.text), .key(.literal), .key(.space), .key(.digit), .key(.letters): return true
             default: return false
             }
+        }
+
+        var isSpace: Bool {
+            if case .key(.space) = action { return true }
+            return false
         }
     }
 
@@ -52,6 +64,10 @@ final class KeyboardKeysView: UIView {
     private static let gap: CGFloat = 6
     private static let sideMargin: CGFloat = 6.5
     private static let cornerRadius: CGFloat = 9
+    private static let caretHold: TimeInterval = 0.35
+    private static let caretStep: CGFloat = 9
+    private static let caretDim: CGFloat = 0.4
+    private static let gridMarks = ["，。？！、：；…～“”—", "（）《》【】@#¥%&*", "+-=/\\|_<>[]{", "}^$€£.,?!:;'"]
     private static let gridSideMargin: CGFloat = 8
     private static let gridRowGap: CGFloat = 7
     // In widths of a letter key, measured on the system keyboard.
@@ -72,7 +88,17 @@ final class KeyboardKeysView: UIView {
     var showsNumberRow = false { didSet { if showsNumberRow != oldValue { rebuild() } } }
     var showsPopup = true
     /// Chinese is typed on the 9-key layout.
-    var nineKey = false { didSet { if nineKey != oldValue { rebuild() } } }
+    var nineKey = false {
+        didSet {
+            guard nineKey != oldValue else { return }
+            gridPage = .main
+            symbols = false
+            moreSymbols = false
+            rebuild()
+        }
+    }
+    /// Moves the caret by this many characters, for a held space bar.
+    var onMoveCaret: ((Int) -> Void)?
     /// A letter typed: its text, how the touch fitted each key, and the learner's record of it.
     var onLetter: ((String, [Float]?, TypingLearner.Sample?) -> Void)?
     var typing: AdaptiveTyping?
@@ -100,7 +126,13 @@ final class KeyboardKeysView: UIView {
     private weak var spaceCell: KeyCell?
     private weak var returnCell: KeyCell?
     private var composing = false
-    private var showsGrid: Bool { nineKey && chinese && !symbols }
+    private var choosingMark = false
+    private var gridPage = GridPage.main
+    private var showsGrid: Bool { nineKey }
+    private var spaceTouch: UITouch?
+    private var spaceTimer: Timer?
+    private var movingCaret = false
+    private var caretX: CGFloat = 0
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -134,22 +166,25 @@ final class KeyboardKeysView: UIView {
         typing?.chinese = value
         if chinese != value {
             chinese = value
+            gridPage = .main
             rebuild()
         }
     }
 
     /// While composing, three keys of the 9-key layout do something else.
-    func setComposing(_ value: Bool) {
-        guard composing != value else { return }
+    func setComposing(_ value: Bool, choosingMark: Bool) {
+        guard composing != value || self.choosingMark != choosingMark else { return }
         composing = value
+        self.choosingMark = choosingMark
         updateGridKeys()
     }
 
     private func updateGridKeys() {
         separatorCell?.text = composing ? "分隔" : "^^"
-        spaceCell?.text = composing ? "选定" : "空格"
-        returnCell?.text = composing ? "确认" : nil
-        returnCell?.icon?.isHidden = composing
+        let pending = composing || choosingMark
+        spaceCell?.text = pending ? "选定" : (chinese ? "空格" : "space")
+        returnCell?.text = pending ? "确认" : nil
+        returnCell?.icon?.isHidden = pending
     }
 
     private func letters(_ text: String) -> [(String, Action, CGFloat)] {
@@ -231,29 +266,68 @@ final class KeyboardKeysView: UIView {
     private func buildGrid() {
         letterCells = [KeyCell?](repeating: nil, count: 26)
         geometry = nil
+        @discardableResult
         func add(_ title: String, _ action: Action, _ column: Int, _ row: Int, width: Int = 1, height: Int = 1) -> KeyCell {
             let cell = makeCell(title, action)
             grid.append((cell, column, row, width, height))
             return cell
         }
-        _ = add("123", .symbols, 0, 0)
-        _ = add("，。?！", .key(.punctuation), 1, 0)
-        _ = add("A B C", .key(.digit("2")), 2, 0)
-        _ = add("D E F", .key(.digit("3")), 3, 0)
-        _ = add("", .key(.backspace), 4, 0)
-        _ = add("#@¥", .moreSymbols, 0, 1)
-        _ = add("G H I", .key(.digit("4")), 1, 1)
-        _ = add("J K L", .key(.digit("5")), 2, 1)
-        _ = add("M N O", .key(.digit("6")), 3, 1)
-        separatorCell = add("", .key(.separator), 4, 1)
-        _ = add("英", .key(.language), 0, 2)
-        _ = add("P Q R S", .key(.digit("7")), 1, 2)
-        _ = add("T U V", .key(.digit("8")), 2, 2)
-        _ = add("W X Y Z", .key(.digit("9")), 3, 2)
+        func mark(_ text: String, _ column: Int, _ row: Int, width: Int = 1) {
+            add(text, .key(.literal(text)), column, row, width: width)
+        }
+        // A phone with a home button has no system globe, so this corner must switch keyboards.
+        let corner: Action = showsGlobe ? .globe : .key(.emoji)
+        let back = chinese ? "拼音" : "ABC"
+        let language = chinese ? "英" : "中"
+        separatorCell = nil
+        switch gridPage {
+        case .main:
+            add("123", .grid(.numbers), 0, 0)
+            add("，。?！", .key(.punctuation), 1, 0)
+            add("", .key(.backspace), 4, 0)
+            add("#@¥", .grid(.marks(0)), 0, 1)
+            add(language, .key(.language), 0, 2)
+            add("", corner, 0, 3)
+            for (index, letters) in ["abc", "def", "ghi", "jkl", "mno", "pqrs", "tuv", "wxyz"].enumerated() {
+                let upper = letters.uppercased()
+                let shown = (chinese || shifted ? upper : letters).map(String.init).joined(separator: " ")
+                let action: Action = chinese ? .key(.digit(Character(String(index + 2)))) : .key(.letters(shifted ? upper : letters))
+                add(shown, action, (index + 1) % 3 + 1, (index + 1) / 3)
+            }
+            if chinese {
+                separatorCell = add("", .key(.separator), 4, 1)
+                add("选拼音", .key(.nextSpelling), 1, 3)
+            } else {
+                add("", .shift, 4, 1)
+                mark(".", 1, 3)
+            }
+        case .numbers:
+            add(back, .grid(.main), 0, 0)
+            add("#@¥", .grid(.marks(0)), 0, 1)
+            add(language, .key(.language), 0, 2)
+            add("", corner, 0, 3)
+            for (index, digit) in "123456789".enumerated() { mark(String(digit), index % 3 + 1, index / 3) }
+            add("", .key(.backspace), 4, 0)
+            mark("-", 4, 1)
+            mark(".", 1, 3)
+            mark("0", 2, 3)
+        case let .marks(page):
+            add(back, .grid(.main), 0, 0)
+            add("123", .grid(.numbers), 0, 1)
+            add(language, .key(.language), 0, 2)
+            add("", .key(.emoji), 0, 3)
+            for (index, text) in Self.gridMarks[page].enumerated() { mark(String(text), index % 3 + 1, index / 3) }
+            add("", .key(.backspace), 4, 0)
+            add(chinese ? "下一页" : "next", .grid(.marks((page + 1) % Self.gridMarks.count)), 4, 1)
+        }
         returnCell = add("", .key(.returnKey), 4, 2, height: 2)
-        _ = add("", showsGlobe ? .globe : .key(.nextKeyboard), 0, 3)
-        _ = add("选拼音", .key(.nextSpelling), 1, 3)
-        spaceCell = add("", .key(.space), 2, 3, width: 2)
+        if case .marks = gridPage {
+            spaceCell = nil
+        } else if case .numbers = gridPage {
+            spaceCell = add("", .key(.space), 3, 3)
+        } else {
+            spaceCell = add("", .key(.space), 2, 3, width: 2)
+        }
         updateGridKeys()
     }
 
@@ -308,7 +382,7 @@ final class KeyboardKeysView: UIView {
         case .key(.backspace): return "delete.left"
         case .key(.returnKey): return "return"
         case .globe: return "globe"
-        case .key(.nextKeyboard): return "face.smiling"
+        case .key(.emoji): return "face.smiling"
         default: return nil
         }
     }
@@ -317,7 +391,7 @@ final class KeyboardKeysView: UIView {
         if case .moreSymbols = action, title.count == 3, title != "123" { return .systemFont(ofSize: 15) }
         switch action {
         case .key(.text), .key(.literal): break
-        case .key(.digit): return .systemFont(ofSize: 17)
+        case .key(.digit), .key(.letters): return .systemFont(ofSize: 17)
         default: return .systemFont(ofSize: showsGrid ? 16 : 18)
         }
         return .systemFont(ofSize: symbols ? 23 : 25)
@@ -439,8 +513,53 @@ final class KeyboardKeysView: UIView {
         keepDisplayFast()
     }
 
+    private func beginSpace(_ touch: UITouch) {
+        spaceTouch = touch
+        spaceTimer?.invalidate()
+        guard !composing, !choosingMark else { return }
+        spaceTimer = Timer.scheduledTimer(withTimeInterval: Self.caretHold, repeats: false) { [weak self] _ in
+            self?.beginMovingCaret(touch)
+        }
+    }
+
+    private func beginMovingCaret(_ touch: UITouch) {
+        guard spaceTouch === touch else { return }
+        movingCaret = true
+        caretX = touch.location(in: self).x
+        haptics?.impactOccurred()
+        haptics?.prepare()
+        cells.forEach { if !$0.isSpace { $0.alpha = Self.caretDim } }
+    }
+
+    private func endSpace() {
+        spaceTimer?.invalidate()
+        spaceTimer = nil
+        spaceTouch = nil
+        guard movingCaret else { return }
+        movingCaret = false
+        cells.forEach { $0.alpha = 1 }
+    }
+
+    /// A key pressed while space is still down: the space came first, so it goes in first.
+    private func flushSpace() {
+        guard let touch = spaceTouch, !movingCaret, let at = presses.firstIndex(where: { $0.touch === touch }) else { return }
+        let press = presses.remove(at: at)
+        endSpace()
+        press.cell.alpha = 1
+        type(press.cell, nil, nil)
+    }
+
+    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
+        guard movingCaret, let touch = spaceTouch, touches.contains(touch) else { return }
+        let steps = Int((touch.location(in: self).x - caretX) / Self.caretStep)
+        guard steps != 0 else { return }
+        caretX += CGFloat(steps) * Self.caretStep
+        onMoveCaret?(steps)
+    }
+
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
         keepDisplayFast()
+        flushSpace()
         for touch in touches.sorted(by: { $0.timestamp < $1.timestamp }) {
             layoutIfNeeded()
             let point = touch.location(in: self)
@@ -453,7 +572,12 @@ final class KeyboardKeysView: UIView {
             if playsSound { AudioServicesPlaySystemSound(1104) }
             showPopup(over: cell)
             // The key is settled as the finger lands, so the letter need not wait for it to lift.
-            if cell.isLetterOrSpace { type(cell, tap, sample) }
+            // Space waits: held down, it moves the caret instead.
+            if cell.isSpace {
+                beginSpace(touch)
+            } else if cell.isLetterOrSpace {
+                type(cell, tap, sample)
+            }
             if case .key(.backspace) = cell.action {
                 onKey?(.backspace)
                 repeatTimer?.invalidate()
@@ -476,7 +600,10 @@ final class KeyboardKeysView: UIView {
     private func type(_ cell: KeyCell, _ tap: [Float]?, _ sample: TypingLearner.Sample?) {
         guard case let .key(key) = cell.action else { return }
         if case let .text(text) = key { onLetter?(text, tap, sample) } else { onKey?(key) }
-        if shifted, case .text = key {
+        var typedLetter = false
+        if case .text = key { typedLetter = true }
+        if case .letters = key { typedLetter = true }
+        if shifted, typedLetter {
             shifted = false
             rebuild()
         }
@@ -491,11 +618,23 @@ final class KeyboardKeysView: UIView {
     private func release(_ press: Press, _ event: UIEvent?) {
         let cell = press.cell
         cell.alpha = 1
+        if cell.isSpace, press.touch === spaceTouch {
+            let moved = movingCaret
+            endSpace()
+            if !moved { type(cell, nil, nil) }
+            return
+        }
         switch cell.action {
         case .key(.backspace):
             repeatTimer?.invalidate()
-        case .key(.text), .key(.literal), .key(.space), .key(.digit):
+        case .key(.text), .key(.literal), .key(.space), .key(.digit), .key(.letters):
             break
+        case .key(.language):
+            gridPage = .main
+            onKey?(.language)
+        case let .grid(page):
+            gridPage = page
+            rebuild()
         case let .key(key):
             onKey?(key)
         case .shift:

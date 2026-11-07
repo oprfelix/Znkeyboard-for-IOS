@@ -26,10 +26,13 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
     private let client = AIClient()
     private static let barHeight: CGFloat = 48
     private static let spellingHeight: CGFloat = 38
+    private static let multiTapWindow: CFTimeInterval = 0.8
     private var barHeight: NSLayoutConstraint!
     private var spellingRowHeight: NSLayoutConstraint!
     private var keysHeight: CGFloat { keys.preferredHeight }
-    private var spellingSize: CGFloat { keys.nineKey && session?.language != .english ? Self.spellingHeight : 0 }
+    /// Kept in English and on the symbol pages too, so the keyboard doesn't change height.
+    private var spellingSize: CGFloat { keys.nineKey ? Self.spellingHeight : 0 }
+    private var lastMultiTap: (letters: String, index: Int, upper: Bool, at: CFTimeInterval)?
     private var keyboardHeight: CGFloat { Self.barHeight + keysHeight + spellingSize }
 
     override func viewDidLoad() {
@@ -88,6 +91,7 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
         keys.onKey = { [weak self] key in self?.pressed(key) }
         keys.onLetter = { [weak self] text, tap, sample in self?.typed(text, tap, sample) }
         keys.typing = typing
+        keys.onMoveCaret = { [weak self] steps in self?.moveCaret(steps) }
         typing.load()
         keys.onGlobe = { [weak self] view, event in self?.handleInputModeList(from: view, with: event) }
         bar.onTap = { [weak self] index in self?.session?.tapItem(index) }
@@ -179,6 +183,7 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
         pasteboardTimer?.invalidate()
+        session?.settleOffer()
         saveLearning()
     }
 
@@ -215,9 +220,36 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
         afterKey(session)
     }
 
+    /// Whole characters, worked out from one reading of the field, as it updates late.
+    private func moveCaret(_ steps: Int) {
+        let proxy = textDocumentProxy
+        let text = steps < 0
+            ? String((proxy.documentContextBeforeInput ?? "").suffix(-steps))
+            : String((proxy.documentContextAfterInput ?? "").prefix(steps))
+        guard !text.isEmpty else { return }
+        proxy.adjustTextPosition(byCharacterOffset: steps < 0 ? -text.utf16.count : text.utf16.count)
+    }
+
+    /// Taps in a row on an English 9-key key step through its letters.
+    private func multiTap(_ letters: String, _ session: KeyboardSession) {
+        let key = letters.lowercased()
+        let now = CACurrentMediaTime()
+        var index = 0
+        var upper = letters != key
+        if let last = lastMultiTap, last.letters == key, now - last.at < Self.multiTapWindow {
+            index = (last.index + 1) % key.count
+            upper = last.upper
+            session.backspace()
+        }
+        lastMultiTap = (key, index, upper, now)
+        let letter = String(Array(key)[index])
+        session.type(Character(upper ? letter.uppercased() : letter))
+    }
+
     private func pressed(_ key: KeyboardKeysView.Key) {
         guard let session else { return }
         hasNewCopy = false
+        if case .letters = key {} else { lastMultiTap = nil }
         switch key {
         case let .text(text):
             typed(text, nil, nil)
@@ -238,6 +270,8 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
         case .punctuation: session.offerPunctuation()
         case .separator: session.separator()
         case .nextSpelling: session.nextSpelling()
+        case .emoji: session.offerEmoji()
+        case let .letters(letters): multiTap(letters, session)
         case .language: session.toggleLanguage()
         case .nextKeyboard: advanceToNextInputMode()
         }
@@ -258,7 +292,7 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
         layoutCard()
         bar.showsLabel = spellingSize == 0
         spellingRow.show(session.spellings, selected: session.spellingIndex)
-        keys.setComposing(session.isComposing)
+        keys.setComposing(session.isComposing, choosingMark: session.offerSelection != nil)
         let expanded = session.expanded && !session.items.isEmpty
         if expanded { grid.show(session.items) }
         grid.isHidden = !expanded
@@ -271,7 +305,8 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
             label: session.isComposing ? session.label : "",
             items: session.items,
             fixTitle: session.canFix ? (session.isChoosingWord ? "取消" : (session.editCaret == nil ? "改词" : "完成")) : nil,
-            expanded: expanded
+            expanded: expanded,
+            selected: session.offerSelection
         )
     }
 

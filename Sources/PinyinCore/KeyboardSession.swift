@@ -27,6 +27,8 @@ public final class KeyboardSession {
     private static let contextCharacters = 16
     private static let maxSpellings = 12
     private static let punctuationOffer = ["，", "。", "？", "！", "、", "：", "；", "…", "“", "”", "（", "）"]
+    private static let englishPunctuationOffer = [",", ".", "?", "!", "'", "\"", ":", ";", "-", "(", ")", "@"]
+    private static let emojiOffer = "😀😂🤣😊😍🥰😘😎🤔😅😭😢😡👍👎👌🙏👏🤝💪❤️🎉🔥✨✅❌⭐️💯🌹🎁📦📮💰💵📈📉☎️📱💻📧📅⏰✈️🚢🚚🏠🏭🌏🇨🇳🇺🇸🍵☕️🍚🍺".map(String.init)
     private static let punctuation: [Character: String] = [
         ",": "，", ".": "。", "?": "？", "!": "！", ":": "：", ";": "；", "(": "（", ")": "）",
     ]
@@ -60,7 +62,13 @@ public final class KeyboardSession {
     public private(set) var spellingIndex: Int?
     private var spellingBase: String?
     private var nineKeyDisplay = ""
-    private var offersPunctuation = false
+    /// What the row lists instead of candidates, and whether it stays open for more picks.
+    private var offer: [String]?
+    private var offerStays = false
+    /// The mark shown in the field and marked in the row, until something settles it.
+    public private(set) var offerSelection: Int?
+    /// How many marks taps on the marks key step through: ，。？！
+    private static let markTaps = 4
 
     private var lastSpace: Date?
     private var fix: Fix?
@@ -131,7 +139,7 @@ public final class KeyboardSession {
 
     /// What the row of candidates lists now.
     public var items: [String] {
-        if offersPunctuation { return Self.punctuationOffer }
+        if let offer { return offer }
         if let fix { return fix.part < 0 ? parts.map(\.text) : fix.options.map(\.text) }
         return composing.isEmpty ? predictions.map(\.text) : candidates.map(\.text)
     }
@@ -144,7 +152,7 @@ public final class KeyboardSession {
     /// [tap] is how the touch fitted each letter key, and [sample] its record for the learner.
     public func type(_ character: Character, tap: [Float]? = nil, sample: TypingLearner.Sample? = nil) {
         lastSpace = nil
-        offersPunctuation = false
+        closeOffer()
         guard language == .chinese else {
             target?.commitText(String(character))
             return
@@ -194,7 +202,7 @@ public final class KeyboardSession {
     /// A digit key of the 9-key keyboard.
     public func typeDigit(_ digit: Character) {
         lastSpace = nil
-        offersPunctuation = false
+        closeOffer()
         englishRun = false
         leaveSpelling()
         update(composing + String(digit))
@@ -232,10 +240,56 @@ public final class KeyboardSession {
 
     /// The marks key: lists them in the row of candidates.
     public func offerPunctuation() {
+        if let selected = offerSelection, let marks = offer {
+            select(mark: (selected + 1) % Self.markTaps, in: marks)
+            return
+        }
         if isComposing { commitWholeTop() }
-        offersPunctuation = true
+        closeOffer()
+        offerStays = false
+        predictions = []
+        select(mark: 0, in: language == .chinese ? Self.punctuationOffer : Self.englishPunctuationOffer)
+    }
+
+    private func select(mark index: Int, in marks: [String]) {
+        offer = marks
+        offerSelection = index
+        target?.setMarkedText(marks[index])
+        changed()
+    }
+
+    /// Puts in the mark waiting in the field, as when the keyboard goes away.
+    public func settleOffer() {
+        guard offerSelection != nil else { return }
+        closeOffer()
+        changed()
+    }
+
+    /// The emoji key: a sheet of them, open until closed. iOS gives keyboards no way to its own.
+    public func offerEmoji() {
+        if isComposing { commitWholeTop() }
+        closeOffer()
+        offer = Self.emojiOffer
+        offerStays = true
+        expanded = true
         predictions = []
         changed()
+    }
+
+    /// [keep] false takes a waiting mark back out of the field instead.
+    private func closeOffer(keep: Bool = true) {
+        if offer != nil { expanded = false }
+        if let selected = offerSelection, let mark = offer?[safe: selected] {
+            offerSelection = nil
+            if keep {
+                target?.commitText(mark)
+                learner.breakChain()
+            } else {
+                target?.setMarkedText("")
+            }
+        }
+        offer = nil
+        offerStays = false
     }
 
     private func leaveSpelling() {
@@ -246,7 +300,7 @@ public final class KeyboardSession {
     /// [text] as it is, with no Chinese punctuation put in its place.
     public func typeLiteral(_ text: String) {
         lastSpace = nil
-        offersPunctuation = false
+        closeOffer()
         englishRun = false
         if isComposing { commitWholeTop() }
         learner.breakChain()
@@ -257,7 +311,12 @@ public final class KeyboardSession {
 
     public func space() {
         settle()
-        offersPunctuation = false
+        if offerSelection != nil {
+            closeOffer()
+            changed()
+            return
+        }
+        closeOffer()
         englishRun = false
         if editCaret != nil {
             editCaret = nil
@@ -283,7 +342,12 @@ public final class KeyboardSession {
     }
 
     public func backspace() {
-        offersPunctuation = false
+        if offerSelection != nil {
+            closeOffer(keep: false)
+            changed()
+            return
+        }
+        closeOffer()
         guard isComposing else {
             settle()
             englishRun = false
@@ -311,7 +375,12 @@ public final class KeyboardSession {
     /// Return: the typed letters go in as they are; otherwise the host app's newline or send.
     public func returnKey() -> Bool {
         settle()
-        offersPunctuation = false
+        if offerSelection != nil {
+            closeOffer()
+            changed()
+            return true
+        }
+        closeOffer()
         englishRun = false
         guard isComposing else { return false }
         commitRaw()
@@ -320,7 +389,7 @@ public final class KeyboardSession {
 
     public func toggleLanguage() {
         settle()
-        offersPunctuation = false
+        closeOffer()
         commitRaw()
         englishRun = false
         learner.breakChain()
@@ -343,8 +412,17 @@ public final class KeyboardSession {
     /// A tap on the row at [index], whatever it lists now.
     public func tapItem(_ index: Int) {
         settle()
-        if offersPunctuation {
-            if let mark = Self.punctuationOffer[safe: index] { typeLiteral(mark) }
+        if let offer {
+            guard let mark = offer[safe: index] else { return }
+            if !offerStays {
+                offerSelection = index
+                self.offer = offer
+                closeOffer()
+                predictions = []
+                changed()
+            } else {
+                target?.commitText(mark)
+            }
         } else if let current = fix {
             pickFix(current, index)
         } else if isComposing {
@@ -389,6 +467,11 @@ public final class KeyboardSession {
 
     public func toggleExpanded() {
         settle()
+        if offerStays {
+            closeOffer()
+            changed()
+            return
+        }
         expanded.toggle()
         changed()
     }
