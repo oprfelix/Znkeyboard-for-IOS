@@ -40,6 +40,8 @@ public struct FuzzyRules: OptionSet, Hashable {
     public static let enEng = FuzzyRules(rawValue: 32)
     public static let inIng = FuzzyRules(rawValue: 64)
     public static let all: FuzzyRules = [.zZh, .cCh, .sSh, .nL, .anAng, .enEng, .inIng]
+    /// What a new user starts with.
+    public static let standard: FuzzyRules = all.subtracting(.anAng)
     public static let labelled: [(rule: FuzzyRules, label: String)] = [
         (.zZh, "z = zh"), (.cCh, "c = ch"), (.sSh, "s = sh"), (.nL, "n = l"),
         (.anAng, "an = ang"), (.enEng, "en = eng"), (.inIng, "in = ing"),

@@ -203,6 +203,8 @@ struct SetupView: View {
     @State private var showKey = false
     @State private var aiOpen = SharedSettings.apiKey.isEmpty
     @State private var askingForKey = false
+    @AppStorage("fuzzyCardOpen") private var fuzzyOpen = false
+    @AppStorage("touchCardOpen") private var touchOpen = true
     @FocusState private var editingKey: Bool
     @State private var translate = SharedSettings.translateLanguage
     @State private var reading = SharedSettings.readingLanguage
@@ -279,13 +281,13 @@ struct SetupView: View {
                 if !isReady { enable }
                 translation
                 ai.id("ai")
-                Label("文字从手机直接发给你选的服务商，没有中转服务器", systemImage: "lock.shield")
+                Label("文字从手机直接发给你选的服务商，不经过我们的服务器", systemImage: "lock.shield")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                     .padding(.vertical, 8)
             }
             .alert("请先配置 API", isPresented: $askingForKey) {
-                Button("以后再说", role: .cancel) {}
+                Button("稍后", role: .cancel) {}
                 Button("去配置") {
                     withAnimation(.snappy) {
                         aiOpen = true
@@ -294,7 +296,7 @@ struct SetupView: View {
                     if apiKey.isEmpty { editingKey = true }
                 }
             } message: {
-                Text("翻译要用你自己的 AI 服务。配置好 API Key 后，就能选择翻译语言。")
+                Text("翻译使用你自己的 AI 服务，填好 API Key 后就能选择语言。")
             }
         }
     }
@@ -379,7 +381,7 @@ struct SetupView: View {
             .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
             .shadow(color: Brand.blue.opacity(0.2), radius: 12, y: 6)
             Text("ZnKeyboard").font(.title2.weight(.bold))
-            Text("和海外客户沟通，不再卡在语言上").font(.subheadline).foregroundStyle(.secondary)
+            Text("用中文打字，用对方的语言沟通").font(.subheadline).foregroundStyle(.secondary)
         }
         .padding(.top, 24)
         .padding(.bottom, 8)
@@ -401,8 +403,8 @@ struct SetupView: View {
     private var enable: some View {
         Card(title: "启用键盘", symbol: "keyboard") {
             VStack(alignment: .leading, spacing: 14) {
-                Step(number: 1, title: "添加键盘", detail: "设置 → 通用 → 键盘 → 键盘 → 添加新键盘，只选 ZnKeyboard")
-                Step(number: 2, title: "允许完全访问", detail: "润色和翻译要联网，复制翻译要读取剪贴板。打开后，切到 ZnKeyboard 打一个字")
+                Step(number: 1, title: "添加键盘", detail: "打开「设置 → 通用 → 键盘 → 键盘 → 添加新键盘」，选择 ZnKeyboard")
+                Step(number: 2, title: "打开完全访问", detail: "润色和翻译需要联网，翻译复制的内容需要读取剪贴板。打开后切到 ZnKeyboard 打一个字，就完成了")
             }
             Button(action: openSettings) {
                 Text("打开系统设置").font(.subheadline.weight(.semibold)).frame(maxWidth: .infinity, minHeight: 44)
@@ -418,8 +420,8 @@ struct SetupView: View {
 
     private var translation: some View {
         Card(title: "翻译语言", symbol: "translate") {
-            languageRow("回复翻译成", "键盘上显示为「翻译为\(translate.chineseName)」", $translate) { SharedSettings.translateLanguage = $0 }
-            languageRow("外文消息翻译成", "复制外文消息后使用", $reading) { SharedSettings.readingLanguage = $0 }
+            languageRow("我的回复译成", "键盘按钮显示为「翻译为\(translate.chineseName)」", $translate) { SharedSettings.translateLanguage = $0 }
+            languageRow("收到的外文译成", "复制外文后，在键盘上点「翻译复制的内容」", $reading) { SharedSettings.readingLanguage = $0 }
         }
     }
 
@@ -468,7 +470,7 @@ struct SetupView: View {
             }
             if kind == .openAICompatible {
                 InputBox {
-                    TextField("接口地址，以 https 开头", text: $baseURL)
+                    TextField("接口地址（https 开头）", text: $baseURL)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .onChange(of: baseURL) { SharedSettings.customBaseURL = $0 }
@@ -526,7 +528,7 @@ struct SetupView: View {
             Button(action: test) {
                 HStack(spacing: 8) {
                     if testing { ProgressView().controlSize(.small) }
-                    Text(testing ? "正在测试" : "测试连接").font(.subheadline.weight(.semibold))
+                    Text(testing ? "正在测试…" : "测试连接").font(.subheadline.weight(.semibold))
                 }
                 .frame(maxWidth: .infinity, minHeight: 44)
             }
@@ -542,8 +544,8 @@ struct SetupView: View {
     }
 
     private var fuzzy: some View {
-        Card(title: "模糊音", symbol: "waveform") {
-            Text("分不清的读音可以打开，打哪个音都能出字。").font(.footnote).foregroundStyle(.secondary)
+        FoldingCard(title: "模糊音", symbol: "waveform", summary: "已开 \(FuzzyRules.labelled.filter { fuzzyRules.contains($0.rule) }.count) 组", open: $fuzzyOpen) {
+            Text("平翘舌、前后鼻音分不清时打开，打哪个音都能出字。").font(.footnote).foregroundStyle(.secondary)
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
                 ForEach(FuzzyRules.labelled, id: \.rule) { item in
                     let on = fuzzyRules.contains(item.rule)
@@ -568,15 +570,15 @@ struct SetupView: View {
     }
 
     private var feel: some View {
-        Card(title: "手感", symbol: "hand.tap") {
+        FoldingCard(title: "触控与手感", symbol: "hand.tap", summary: "振动、声音、按键学习", open: $touchOpen) {
             VStack(spacing: 0) {
-                setting("按键振动", "需要完全访问", $haptics) { SharedSettings.hapticsEnabled = $0 }
-                setting("按键声音", "需要完全访问", $keySound) { SharedSettings.keySoundEnabled = $0 }
-                setting("按键气泡", "按下时放大显示字母", $keyPopup) { SharedSettings.keyPopupEnabled = $0 }
-                setting("数字行", "在字母上方显示数字键", $numberRow) { SharedSettings.numberRow = $0 }
-                setting("按键学习", "记住你的落点习惯，按偏时自动纠正", $adaptiveTouch) { SharedSettings.adaptiveTouch = $0 }
-                setting("英文句首大写", "英文模式下自动大写", $autoCapitalize) { SharedSettings.autoCapitalize = $0 }
-                setting("双击空格输入句号", nil, $doubleSpace) { SharedSettings.doubleSpacePeriod = $0 }
+                setting("按键振动", "需要打开完全访问", $haptics) { SharedSettings.hapticsEnabled = $0 }
+                setting("按键声音", "需要打开完全访问", $keySound) { SharedSettings.keySoundEnabled = $0 }
+                setting("按键气泡", "按下时在上方放大显示字母", $keyPopup) { SharedSettings.keyPopupEnabled = $0 }
+                setting("数字行", "在字母上方多显示一排数字", $numberRow) { SharedSettings.numberRow = $0 }
+                setting("按键学习", "记住你的按键习惯，按偏时自动纠正", $adaptiveTouch) { SharedSettings.adaptiveTouch = $0 }
+                setting("英文句首大写", "英文输入时自动大写句首字母", $autoCapitalize) { SharedSettings.autoCapitalize = $0 }
+                setting("双击空格输入句号", "连按两下空格，输入句号", $doubleSpace) { SharedSettings.doubleSpacePeriod = $0 }
             }
         }
     }
@@ -619,7 +621,7 @@ struct SetupView: View {
     private var tryIt: some View {
         Card(title: "试一试", symbol: "text.cursor") {
             InputBox {
-                TryField(text: $text, placeholder: "切换到 ZnKeyboard，打几个字试试")
+                TryField(text: $text, placeholder: "切到 ZnKeyboard，打几个字试试")
                     .padding(.vertical, 6)
             }
         }

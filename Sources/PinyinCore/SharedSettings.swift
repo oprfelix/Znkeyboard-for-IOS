@@ -45,7 +45,7 @@ public enum SharedSettings {
     }
 
     public static var fuzzyRules: FuzzyRules {
-        get { defaults.object(forKey: "fuzzyRules") == nil ? .all : FuzzyRules(rawValue: defaults.integer(forKey: "fuzzyRules")) }
+        get { defaults.object(forKey: "fuzzyRules") == nil ? .standard : FuzzyRules(rawValue: defaults.integer(forKey: "fuzzyRules")) }
         set { defaults.set(newValue.rawValue, forKey: "fuzzyRules") }
     }
 
