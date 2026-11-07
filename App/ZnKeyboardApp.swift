@@ -15,6 +15,28 @@ enum Brand {
     static let soft = Color(red: 0.16, green: 0.42, blue: 1).opacity(0.1)
 }
 
+/// Content scrolls into frosted glass under the status bar, blurred at the top and clear lower
+/// down: iOS 26's own edge effect, or a masked material before it.
+struct TopEdgeBlur: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(iOS 26, *) {
+            content.scrollEdgeEffectStyle(.soft, for: .top)
+        } else {
+            content.overlay(alignment: .top) {
+                GeometryReader { proxy in
+                    Rectangle()
+                        .fill(.ultraThinMaterial)
+                        .mask(LinearGradient(stops: [.init(color: .black, location: 0.5), .init(color: .clear, location: 1)], startPoint: .top, endPoint: .bottom))
+                        .frame(height: proxy.safeAreaInsets.top + 24)
+                        .ignoresSafeArea(edges: .top)
+                        .allowsHitTesting(false)
+                }
+                .frame(height: 0)
+            }
+        }
+    }
+}
+
 /// A rounded white card with a small title.
 struct Card<Content: View>: View {
     let title: String
@@ -256,23 +278,7 @@ struct SetupView: View {
         }
         .scrollDismissesKeyboard(.interactively)
         .background(Color(.systemGroupedBackground).ignoresSafeArea())
-        // Content fades out under the status bar, with no edge to see, however far it is pulled.
-        .overlay(alignment: .top) {
-            GeometryReader { proxy in
-                LinearGradient(
-                    stops: [
-                        .init(color: Color(.systemGroupedBackground), location: 0.6),
-                        .init(color: Color(.systemGroupedBackground).opacity(0), location: 1),
-                    ],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-                .frame(height: proxy.safeAreaInsets.top + 16)
-                .ignoresSafeArea(edges: .top)
-                .allowsHitTesting(false)
-            }
-            .frame(height: 0)
-        }
+        .modifier(TopEdgeBlur())
     }
 
     private func pageTitle(_ title: String) -> some View {
