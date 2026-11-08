@@ -92,6 +92,7 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
         keys.onLetter = { [weak self] text, tap, sample in self?.typed(text, tap, sample) }
         keys.typing = typing
         keys.onMoveCaret = { [weak self] steps in self?.moveCaret(steps) }
+        keys.onChooseLayout = { [weak self] nine in self?.chooseLayout(nine) }
         typing.load()
         keys.onGlobe = { [weak self] view, event in self?.handleInputModeList(from: view, with: event) }
         bar.onTap = { [weak self] index in self?.session?.tapItem(index) }
@@ -218,6 +219,15 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
             }
         }
         afterKey(session)
+    }
+
+    /// The layout picked on the keyboard; the app shows it next time it opens.
+    private func chooseLayout(_ nine: Bool) {
+        SharedSettings.nineKey = nine
+        keys.nineKey = nine
+        session?.nineKey = nine
+        heightConstraint?.constant = keyboardHeight
+        render()
     }
 
     /// Whole characters, worked out from one reading of the field, as it updates late.

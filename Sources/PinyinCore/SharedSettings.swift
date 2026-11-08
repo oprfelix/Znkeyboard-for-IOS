@@ -29,7 +29,10 @@ public enum SharedSettings {
                 defaults.removeObject(forKey: "model")
                 defaults.set(shared, forKey: key)
             }
-            return defaults.string(forKey: key) ?? providerKind.defaultModel
+            let saved = defaults.string(forKey: key) ?? providerKind.defaultModel
+            // A model of another provider, or one no longer offered, falls back to the default.
+            let offered = providerKind.models
+            return offered.isEmpty || offered.contains(saved) ? saved : providerKind.defaultModel
         }
         set { defaults.set(newValue, forKey: "model.\(providerKind.rawValue)") }
     }

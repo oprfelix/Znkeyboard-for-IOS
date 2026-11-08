@@ -21,6 +21,15 @@ public enum AIProviderKind: String, CaseIterable {
         }
     }
 
+    /// The models offered for this provider; a custom one lists what its server reports.
+    public var models: [String] {
+        switch self {
+        case .deepSeek: return ["deepseek-flash"]
+        case .gemini: return ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-2.5-flash-lite"]
+        case .openAICompatible: return []
+        }
+    }
+
     public var defaultModel: String {
         switch self {
         case .deepSeek: return "deepseek-flash"

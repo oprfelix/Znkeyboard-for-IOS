@@ -37,6 +37,32 @@ struct TopEdgeBlur: ViewModifier {
     }
 }
 
+/// One fuzzy sound, on or off; every change is saved at once.
+struct FuzzyToggle: View {
+    let rule: FuzzyRules
+    let label: String
+    let hint: String?
+    @Binding var rules: FuzzyRules
+
+    var body: some View {
+        Toggle(isOn: Binding(
+            get: { rules.contains(rule) },
+            set: { on in
+                var next = rules
+                if on { next.insert(rule) } else { next.remove(rule) }
+                rules = next
+                SharedSettings.fuzzyRules = next
+            }
+        )) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(label).font(.subheadline)
+                if let hint { Text(hint).font(.caption).foregroundStyle(.secondary) }
+            }
+        }
+        .padding(.vertical, 7)
+    }
+}
+
 /// A rounded white card with a small title.
 struct Card<Content: View>: View {
     let title: String
@@ -253,9 +279,10 @@ struct SetupView: View {
     }
 
     /// The saved model stays listed even when the provider didn't name it.
+    /// The fixed list for DeepSeek and Gemini; a custom service lists what it reports.
     private var modelChoices: [String] {
-        let known = models.isEmpty ? [kind.defaultModel] : models
-        return known.contains(model) || model.isEmpty ? known : [model] + known
+        if !kind.models.isEmpty { return kind.models }
+        return models.contains(model) || model.isEmpty ? models : [model] + models
     }
 
     var body: some View {
@@ -333,8 +360,6 @@ struct SetupView: View {
             VStack(spacing: 0) {
                 linkRow("隐私政策", "https://znkeyboard.2amz.com/privacy", "arrow.up.right")
                 Divider()
-                linkRow("反馈问题", "mailto:oprfelix@gmail.com", "envelope")
-                Divider()
                 HStack {
                     Text("版本")
                     Spacer()
@@ -369,11 +394,12 @@ struct SetupView: View {
     /// The keyboard reports full access once it has it; iOS lets no app ask whether it is added.
     private func refresh() {
         fullAccess = SharedSettings.keyboardHasFullAccess
+        nineKey = SharedSettings.nineKey
     }
 
     private func loadModels() async {
         models = []
-        guard !apiKey.isEmpty else { return }
+        guard kind == .openAICompatible, !apiKey.isEmpty else { return }
         try? await Task.sleep(nanoseconds: 600_000_000)
         guard !Task.isCancelled, let found = try? await AIClient().models(SharedSettings.provider), !Task.isCancelled else { return }
         models = found
@@ -582,34 +608,30 @@ struct SetupView: View {
             }
             .buttonStyle(.plain)
             .onChange(of: nineKey) { SharedSettings.nineKey = $0 }
+            Text("也可以在键盘上长按「中」切换。").font(.footnote).foregroundStyle(.secondary)
         }
     }
 
     private var fuzzy: some View {
         FoldingCard(title: "模糊音", symbol: "waveform", summary: "已开 \(FuzzyRules.labelled.filter { fuzzyRules.contains($0.rule) }.count) 组", open: $fuzzyOpen) {
             Text("平翘舌、前后鼻音分不清时打开，打哪个音都能出字。").font(.footnote).foregroundStyle(.secondary)
-            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
+            VStack(spacing: 0) {
                 ForEach(FuzzyRules.labelled, id: \.rule) { item in
-                    let on = fuzzyRules.contains(item.rule)
-                    Button {
-                        if on { fuzzyRules.remove(item.rule) } else { fuzzyRules.insert(item.rule) }
-                        SharedSettings.fuzzyRules = fuzzyRules
-                    } label: {
-                        HStack {
-                            Text(item.label).font(.subheadline.monospaced())
-                            Spacer()
-                            Image(systemName: on ? "checkmark.circle.fill" : "circle")
-                                .foregroundStyle(on ? Brand.blue : Color.secondary)
-                        }
-                        .padding(.horizontal, 12)
-                        .frame(height: 44)
-                        .background(on ? Brand.soft : Color(.tertiarySystemFill), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                    }
-                    .buttonStyle(.plain)
+                    FuzzyToggle(rule: item.rule, label: item.label, hint: Self.fuzzyHints[item.label], rules: $fuzzyRules)
                 }
             }
         }
     }
+
+    private static let fuzzyHints = [
+        "z = zh": "打 zi 也能出「知」",
+        "c = ch": "打 ci 也能出「吃」",
+        "s = sh": "打 si 也能出「是」",
+        "n = l": "打 nan 也能出「蓝」",
+        "an = ang": "打 fan 也能出「方」",
+        "en = eng": "打 chen 也能出「成」",
+        "in = ing": "打 xin 也能出「星」",
+    ]
 
     private var feel: some View {
         FoldingCard(title: "触控与手感", symbol: "hand.tap", summary: "振动、声音、按键学习", open: $touchOpen) {

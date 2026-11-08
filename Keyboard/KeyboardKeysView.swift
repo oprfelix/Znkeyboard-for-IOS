@@ -65,6 +65,7 @@ final class KeyboardKeysView: UIView {
     private static let sideMargin: CGFloat = 6.5
     private static let cornerRadius: CGFloat = 9
     private static let caretHold: TimeInterval = 0.35
+    private static let layoutHold: TimeInterval = 0.45
     private static let caretStep: CGFloat = 9
     private static let caretDim: CGFloat = 0.4
     private static let gridMarks = ["，。？！、：；…～“”—", "（）《》【】@#¥%&*", "+-=/\\|_<>[]{", "}^$€£.,?!:;'"]
@@ -99,6 +100,8 @@ final class KeyboardKeysView: UIView {
     }
     /// Moves the caret by this many characters, for a held space bar.
     var onMoveCaret: ((Int) -> Void)?
+    /// A layout chosen by holding the language key: true for 9 keys.
+    var onChooseLayout: ((Bool) -> Void)?
     /// A letter typed: its text, how the touch fitted each key, and the learner's record of it.
     var onLetter: ((String, [Float]?, TypingLearner.Sample?) -> Void)?
     var typing: AdaptiveTyping?
@@ -131,6 +134,10 @@ final class KeyboardKeysView: UIView {
     private var showsGrid: Bool { nineKey }
     private var spaceTouch: UITouch?
     private var spaceTimer: Timer?
+    private var layoutTouch: UITouch?
+    private var layoutTimer: Timer?
+    private let layoutMenu = UIStackView()
+    private var layoutChoice: Bool?
     private var movingCaret = false
     private var caretX: CGFloat = 0
 
@@ -549,7 +556,80 @@ final class KeyboardKeysView: UIView {
         type(press.cell, nil, nil)
     }
 
+    // MARK: Holding the language key picks the layout
+
+    private func beginLanguageHold(_ touch: UITouch, _ cell: KeyCell) {
+        layoutTouch = touch
+        layoutTimer?.invalidate()
+        layoutTimer = Timer.scheduledTimer(withTimeInterval: Self.layoutHold, repeats: false) { [weak self] _ in
+            self?.showLayoutMenu(over: cell, touch)
+        }
+    }
+
+    private func showLayoutMenu(over cell: KeyCell, _ touch: UITouch) {
+        guard layoutTouch === touch else { return }
+        haptics?.impactOccurred()
+        haptics?.prepare()
+        layoutMenu.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        layoutMenu.axis = .horizontal
+        layoutMenu.distribution = .fillEqually
+        layoutMenu.spacing = 4
+        layoutMenu.layoutMargins = UIEdgeInsets(top: 4, left: 4, bottom: 4, right: 4)
+        layoutMenu.isLayoutMarginsRelativeArrangement = true
+        layoutMenu.backgroundColor = Self.letterKey
+        layoutMenu.layer.cornerRadius = Self.cornerRadius + 2
+        layoutMenu.layer.shadowColor = UIColor.black.cgColor
+        layoutMenu.layer.shadowOpacity = 0.25
+        layoutMenu.layer.shadowRadius = 6
+        layoutMenu.layer.shadowOffset = CGSize(width: 0, height: 2)
+        for title in ["全键盘", "九宫格"] {
+            let label = UILabel()
+            label.text = title
+            label.textAlignment = .center
+            label.font = .systemFont(ofSize: 16)
+            label.layer.cornerRadius = Self.cornerRadius
+            label.layer.masksToBounds = true
+            layoutMenu.addArrangedSubview(label)
+        }
+        let width: CGFloat = 176, height: CGFloat = 48
+        let x = min(max(cell.frame.minX, 4), bounds.width - width - 4)
+        layoutMenu.frame = CGRect(x: x, y: max(cell.frame.minY - height - 6, 0), width: width, height: height)
+        layoutMenu.isHidden = false
+        addSubview(layoutMenu)
+        bringSubviewToFront(layoutMenu)
+        popup.isHidden = true
+        moveLayoutChoice(touch)
+    }
+
+    private func moveLayoutChoice(_ touch: UITouch) {
+        guard !layoutMenu.isHidden, layoutMenu.superview != nil else { return }
+        let x = touch.location(in: self).x
+        let choice = x >= layoutMenu.frame.midX
+        guard layoutChoice != choice || layoutChoice == nil else { return }
+        layoutChoice = choice
+        for (index, view) in layoutMenu.arrangedSubviews.enumerated() {
+            guard let label = view as? UILabel else { continue }
+            let picked = (index == 1) == choice
+            label.backgroundColor = picked ? .systemBlue : .clear
+            label.textColor = picked ? .white : .label
+        }
+    }
+
+    /// The layout picked, or nil when the key was only tapped.
+    private func endLanguageHold() -> Bool? {
+        layoutTimer?.invalidate()
+        layoutTimer = nil
+        layoutTouch = nil
+        let shown = layoutMenu.superview != nil && !layoutMenu.isHidden
+        let choice = layoutChoice
+        layoutChoice = nil
+        layoutMenu.isHidden = true
+        layoutMenu.removeFromSuperview()
+        return shown ? (choice ?? nineKey) : nil
+    }
+
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
+        if let touch = layoutTouch, touches.contains(touch) { moveLayoutChoice(touch) }
         guard movingCaret, let touch = spaceTouch, touches.contains(touch) else { return }
         let steps = Int((touch.location(in: self).x - caretX) / Self.caretStep)
         guard steps != 0 else { return }
@@ -573,6 +653,7 @@ final class KeyboardKeysView: UIView {
             showPopup(over: cell)
             // The key is settled as the finger lands, so the letter need not wait for it to lift.
             // Space waits: held down, it moves the caret instead.
+            if case .key(.language) = cell.action { beginLanguageHold(touch, cell) }
             if cell.isSpace {
                 beginSpace(touch)
             } else if cell.isLetterOrSpace {
@@ -630,6 +711,10 @@ final class KeyboardKeysView: UIView {
         case .key(.text), .key(.literal), .key(.space), .key(.digit), .key(.letters):
             break
         case .key(.language):
+            if press.touch === layoutTouch, let nine = endLanguageHold() {
+                if nine != nineKey { onChooseLayout?(nine) }
+                return
+            }
             gridPage = .main
             onKey?(.language)
         case let .grid(page):
