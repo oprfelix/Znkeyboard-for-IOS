@@ -17,7 +17,7 @@ initials and the first match is the best. Word ids are distinct dict.tsv texts i
 ids lm.bin was built for; trade words not in dict.tsv have id -1.
 
 Usage: tools/build_dict.py <dict.tsv> <trade.tsv>... <dict.bin>
-(trade.tsv is Android's, then tools/trade_extra.tsv.)
+(trade.tsv is Android's, then tools/trade_extra.tsv and tools/chat_phrases.tsv.)
 """
 import math
 import struct
