@@ -585,13 +585,18 @@ struct OnboardingView: View {
     @EnvironmentObject private var store: Store
     @AppStorage("keyboardAddedConfirmed") private var addedConfirmed = false
     @AppStorage("pasteConfirmed") private var pasteConfirmed = false
+    /// iOS tells only the keyboard whether it has full access, so the user may say so here.
+    @AppStorage("fullAccessConfirmed") private var fullAccessConfirmed = false
+    @Environment(\.scenePhase) private var scenePhase
     @State private var text = ""
+    @State private var focusTry = 0
     let done: () -> Void
 
     private let poll = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     private var added: Bool { addedConfirmed || store.fullAccess }
-    private var allDone: Bool { added && store.fullAccess && pasteConfirmed && store.aiConfigured }
+    private var accessOn: Bool { store.fullAccess || fullAccessConfirmed }
+    private var allDone: Bool { added && accessOn && pasteConfirmed && store.aiConfigured }
 
     var body: some View {
         NavigationStack {
@@ -613,13 +618,19 @@ struct OnboardingView: View {
                         Button("打开设置页") { Store.openSettings() }
                         Button("我已添加") { addedConfirmed = true }
                     }
-                    step(2, "打开完全访问", done: store.fullAccess,
+                    step(2, "打开完全访问", done: accessOn,
                          detail: "在同一页打开「允许完全访问」。润色和翻译需要联网；普通打字不需要，也不会上传你输入的内容。")
-                    if added && !store.fullAccess {
+                    if added && !accessOn {
                         Button("打开设置页") { Store.openSettings() }
+                        Button("我已打开") { fullAccessConfirmed = true }
                         VStack(alignment: .leading, spacing: 6) {
-                            Text("打开后，在下面切到 ZnKeyboard 打一个字，这一步就会自动打勾。").font(.footnote).foregroundStyle(.secondary)
-                            TryField(text: $text, placeholder: "切到 ZnKeyboard 打一个字")
+                            (Text("也可以在下面试一下：按住键盘左下角的 ") + Text(Image(systemName: "globe")) + Text("，选 ZnKeyboard，打一个字，这一步就会自动打勾。"))
+                                .font(.footnote).foregroundStyle(.secondary)
+                            TryField(text: $text, placeholder: "切到 ZnKeyboard 打一个字", focus: focusTry)
+                            if !text.isEmpty {
+                                Text("打了字还没打勾？说明「允许完全访问」还没打开，或者现在用的不是 ZnKeyboard。")
+                                    .font(.footnote).foregroundStyle(.orange)
+                            }
                         }
                         .padding(.vertical, 4)
                     }
@@ -638,11 +649,11 @@ struct OnboardingView: View {
                 }
                 Section {
                     Button(action: done) {
-                        Text(allDone ? "开始使用" : "稍后再说")
-                            .font(.body.weight(allDone ? .semibold : .regular))
+                        Text("开始使用")
+                            .font(.body.weight(.semibold))
                             .frame(maxWidth: .infinity)
                     }
-                    .foregroundStyle(allDone ? Brand.blue : .secondary)
+                    .foregroundStyle(Brand.blue)
                 } footer: {
                     if !allDone { Text("没完成的步骤，之后在「翻译」页顶部可以继续。") }
                 }
@@ -651,6 +662,10 @@ struct OnboardingView: View {
             .navigationBarTitleDisplayMode(.inline)
             .scrollDismissesKeyboard(.interactively)
             .onReceive(poll) { _ in store.refresh() }
+            // Back from Settings with full access still to check: bring up the keyboard to try.
+            .onChange(of: scenePhase) { phase in
+                if phase == .active, added, !accessOn { focusTry += 1 }
+            }
         }
         .background(KeyboardDismisser())
     }
@@ -821,6 +836,8 @@ struct KeyboardDismisser: UIViewRepresentable {
 struct TryField: UIViewRepresentable {
     @Binding var text: String
     let placeholder: String
+    /// Raising it brings up the keyboard in the field.
+    var focus = 0
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -849,6 +866,10 @@ struct TryField: UIViewRepresentable {
 
     func updateUIView(_ view: UITextView, context: Context) {
         if view.text != text { view.text = text }
+        if focus != context.coordinator.focus {
+            context.coordinator.focus = focus
+            DispatchQueue.main.async { view.becomeFirstResponder() }
+        }
         context.coordinator.placeholder?.isHidden = !text.isEmpty
     }
 
@@ -860,7 +881,11 @@ struct TryField: UIViewRepresentable {
     final class Coordinator: NSObject, UITextViewDelegate {
         private let parent: TryField
         weak var placeholder: UILabel?
-        init(_ parent: TryField) { self.parent = parent }
+        var focus: Int
+        init(_ parent: TryField) {
+            self.parent = parent
+            focus = parent.focus
+        }
         func textViewDidChange(_ view: UITextView) {
             parent.text = view.text
             placeholder?.isHidden = !view.text.isEmpty
