@@ -388,16 +388,30 @@ public final class PinyinLexicon {
         let singlesOnly = locked.isEmpty && !whole.isEmpty && whole.allSatisfy { rawSyllables($0).count == 1 }
         let short = locked.isEmpty && typed.count >= 2 ? codeHits(Array(digits.utf8), initials: true) : []
         if singlesOnly && typed.count >= 2 {
-            // Also the top character of every syllable the digits spell (586 → 落, 论, 军, 困, 括),
-            // so a less used syllable is not pushed behind the 简拼 words.
+            // The first few, and the top character of every syllable the digits spell (586 → 落,
+            // 论, 军, 困, 括), so a less used syllable is not pushed behind the 简拼 words. Then the
+            // other characters and the 简拼 words by how often they are used, 简拼 counting a little
+            // less: 54 lists 及 and 机 before 机构.
             var spelled = Set<String>()
-            let heads = whole.enumerated().filter { i, hit in
-                spelled.insert(rawSyllables(hit)[0]).inserted || i < Self.singlesBeforeInitials
-            }.map { $0.element }
-            take(heads, typed.count, heads.count)
-            take(short, typed.count, Self.initialsLimit)
+            var isHead = Set<Int>()
+            for (i, hit) in whole.enumerated() where spelled.insert(rawSyllables(hit)[0]).inserted || i < Self.singlesBeforeInitials {
+                isHead.insert(hit)
+            }
+            take(whole.filter { isHead.contains($0) }, typed.count, isHead.count)
+            let shortcuts = Array(short.lazy.filter { self.rawSyllables($0).count == typed.count }.prefix(Self.initialsLimit))
+            var next = 0
+            for single in whole where !isHead.contains(single) {
+                while next < shortcuts.count && score(shortcuts[next]) - Self.initialsPenalty > score(single) {
+                    take([shortcuts[next]], typed.count, 1)
+                    next += 1
+                }
+                take([single], typed.count, 1)
+            }
+            take(Array(shortcuts[next...]), typed.count, Self.initialsLimit)
         }
         take(whole, typed.count, Self.fullLimit)
+        // Then every other character, however many share the digits (5426: jian, lian, jiao…).
+        take(whole.filter { rawSyllables($0).count == 1 }, typed.count, whole.count)
         // The last syllable still being typed: complete it from every syllable code it starts.
         var growing: [Int] = []
         if typed.count >= 1 {
@@ -470,6 +484,8 @@ public final class PinyinLexicon {
     private static let maxNineKeyCache = 3000
     private static let fullLimit = 30
     private static let initialsLimit = 10
+    /// How much less a 简拼 word counts than a character spelled in full (ln 4: a quarter).
+    private static let initialsPenalty = Float(log(4.0))
     private static let singlesBeforeInitials = 6
     private static let partialLimit = 8
     private static let singleLimit = 40
