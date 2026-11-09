@@ -388,7 +388,13 @@ public final class PinyinLexicon {
         let singlesOnly = locked.isEmpty && !whole.isEmpty && whole.allSatisfy { rawSyllables($0).count == 1 }
         let short = locked.isEmpty && typed.count >= 2 ? codeHits(Array(digits.utf8), initials: true) : []
         if singlesOnly && typed.count >= 2 {
-            take(whole, typed.count, Self.singlesBeforeInitials)
+            // Also the top character of every syllable the digits spell (586 → 落, 论, 军, 困, 括),
+            // so a less used syllable is not pushed behind the 简拼 words.
+            var spelled = Set<String>()
+            let heads = whole.enumerated().filter { i, hit in
+                spelled.insert(rawSyllables(hit)[0]).inserted || i < Self.singlesBeforeInitials
+            }.map { $0.element }
+            take(heads, typed.count, heads.count)
             take(short, typed.count, Self.initialsLimit)
         }
         take(whole, typed.count, Self.fullLimit)
