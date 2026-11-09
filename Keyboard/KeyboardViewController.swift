@@ -140,7 +140,7 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
         if hasFullAccess { SharedSettings.keyboardHasFullAccess = true }
         var haptics: UIImpactFeedbackGenerator?
         if hasFullAccess, SharedSettings.hapticsEnabled {
-            haptics = UIImpactFeedbackGenerator(style: .light)
+            haptics = UIImpactFeedbackGenerator(style: .medium)
             haptics?.prepare()
         }
         keys.haptics = haptics

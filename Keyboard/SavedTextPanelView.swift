@@ -46,7 +46,7 @@ final class SavedTextPanelView: UIView {
         clear.titleLabel?.font = .systemFont(ofSize: 15)
         clear.tintColor = .systemRed
         clear.addTarget(self, action: #selector(clearTapped), for: .touchUpInside)
-        close.setImage(UIImage(systemName: "chevron.down", withConfiguration: UIImage.SymbolConfiguration(pointSize: 18)), for: .normal)
+        close.setImage(UIImage(systemName: "chevron.up", withConfiguration: UIImage.SymbolConfiguration(pointSize: 18)), for: .normal)
         close.tintColor = .label
         close.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
         list.alwaysBounceVertical = true

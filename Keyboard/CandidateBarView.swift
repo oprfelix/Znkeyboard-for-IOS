@@ -161,8 +161,11 @@ final class CandidateBarView: UIView, UIScrollViewDelegate {
 
     /// The small pinyin line sits over the candidates' column: a tap there picks the one below.
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
-        if !scroller.isHidden, point.y < scroller.frame.minY, point.x < scroller.frame.maxX, self.point(inside: point, with: event) {
-            return super.hitTest(CGPoint(x: point.x, y: scroller.frame.minY + 1), with: event)
+        // Anywhere in the bar's height over the candidates reaches them, so a swipe that starts a
+        // little above or below the words still scrolls them.
+        if !scroller.isHidden, point.x < scroller.frame.maxX, self.point(inside: point, with: event),
+           point.y < scroller.frame.minY || point.y >= scroller.frame.maxY {
+            return super.hitTest(CGPoint(x: point.x, y: min(max(point.y, scroller.frame.minY + 1), scroller.frame.maxY - 1)), with: event)
         }
         return super.hitTest(point, with: event)
     }

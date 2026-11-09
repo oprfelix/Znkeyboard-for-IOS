@@ -81,6 +81,8 @@ final class KeyboardKeysView: UIView {
     private static let wideSymbolKey: CGFloat = 1.47
     /// Sampled from the system keyboard, which fills every key alike in both appearances.
     static let letterKey = UIColor { $0.userInterfaceStyle == .dark ? UIColor(white: 61.0 / 255, alpha: 1) : .white }
+    /// A key held down, as on the system keyboard: the grey of its function keys, the label unchanged.
+    static let pressedKey = UIColor { $0.userInterfaceStyle == .dark ? UIColor(white: 34.0 / 255, alpha: 1) : UIColor(red: 172.0 / 255, green: 177.0 / 255, blue: 185.0 / 255, alpha: 1) }
 
     var onKey: ((Key) -> Void)?
     var onGlobe: ((UIView, UIEvent) -> Void)?
@@ -487,6 +489,11 @@ final class KeyboardKeysView: UIView {
         let x = Float(point.x), y = Float(point.y)
         let tap = typing.decoder.letterCosts(x: x, y: y, keys: geometry)
         guard typing.adaptiveEnabled else { return (cell, tap, nil) }
+        // On the key itself, even at its edge, it is that key, as on the system keyboard; only a
+        // touch between keys is weighed against its neighbours.
+        if cell.frame.contains(point) {
+            return (cell, tap, TypingLearner.Sample(letter: geometric, x: x, y: y, keys: geometry))
+        }
         let letter = typing.decoder.decode(x: x, y: y, geometricLetter: geometric, keys: geometry, previous2: typing.learner.previous2, previous1: typing.learner.previous1, useLanguageModel: true)
         return (letterCells[letter] ?? cell, tap, TypingLearner.Sample(letter: letter, x: x, y: y, keys: geometry))
     }
@@ -556,7 +563,7 @@ final class KeyboardKeysView: UIView {
         guard let touch = spaceTouch, !movingCaret, let at = presses.firstIndex(where: { $0.touch === touch }) else { return }
         let press = presses.remove(at: at)
         endSpace()
-        press.cell.alpha = 1
+        setPressed(press.cell, false)
         type(press.cell, nil, nil)
     }
 
@@ -673,7 +680,7 @@ final class KeyboardKeysView: UIView {
             guard let nearest = cell(at: point) else { continue }
             let (cell, tap, sample) = resolve(nearest, point)
             presses.append((touch, cell))
-            UIView.performWithoutAnimation { cell.alpha = 0.55 }
+            setPressed(cell, true)
             haptics?.impactOccurred()
             haptics?.prepare()
             if playsSound { AudioServicesPlaySystemSound(1104) }
@@ -728,7 +735,7 @@ final class KeyboardKeysView: UIView {
     /// The key is the one the finger came down on, so rolling off it does not change it.
     private func release(_ press: Press, _ event: UIEvent?) {
         let cell = press.cell
-        cell.alpha = 1
+        setPressed(cell, false)
         if cell.isSpace, press.touch === spaceTouch {
             let moved = movingCaret
             endSpace()
@@ -775,6 +782,10 @@ final class KeyboardKeysView: UIView {
             if let event { onGlobe?(cell, event) }
             onKey?(.nextKeyboard)
         }
+    }
+
+    private func setPressed(_ cell: KeyCell, _ pressed: Bool) {
+        cell.layer.backgroundColor = (pressed ? Self.pressedKey : Self.letterKey).resolvedColor(with: traitCollection).cgColor
     }
 
     private func showPopup(over cell: KeyCell) {
