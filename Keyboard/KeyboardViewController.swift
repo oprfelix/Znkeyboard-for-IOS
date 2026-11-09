@@ -5,6 +5,9 @@ import UIKit
 final class KeyboardViewController: UIInputViewController, TextTarget {
     private let keys = KeyboardKeysView()
     private let grid = CandidateGridView()
+    private let saved = SavedTextPanelView()
+    /// Which saved texts cover the keys, if any.
+    private var savedTab: SavedTextPanelView.Tab?
     private let typing = AdaptiveTyping()
     private var afterConsent: (() -> Void)?
     private let bar = CandidateBarView()
@@ -27,6 +30,8 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
     private static let barHeight: CGFloat = 48
     private static let spellingHeight: CGFloat = 38
     private static let multiTapWindow: CFTimeInterval = 0.8
+    /// The field shows a few hundred characters before the caret; a long line takes more reads.
+    private static let maxLineReads = 8
     private var barHeight: NSLayoutConstraint!
     private var spellingRowHeight: NSLayoutConstraint!
     private var keysHeight: CGFloat { keys.preferredHeight }
@@ -67,6 +72,35 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
             grid.bottomAnchor.constraint(equalTo: keys.bottomAnchor),
         ])
         grid.isHidden = true
+        saved.translatesAutoresizingMaskIntoConstraints = false
+        root.addSubview(saved)
+        NSLayoutConstraint.activate([
+            saved.topAnchor.constraint(equalTo: keys.topAnchor),
+            saved.leadingAnchor.constraint(equalTo: keys.leadingAnchor),
+            saved.trailingAnchor.constraint(equalTo: keys.trailingAnchor),
+            saved.bottomAnchor.constraint(equalTo: keys.bottomAnchor),
+        ])
+        saved.isHidden = true
+        saved.onTab = { [weak self] tab in self?.openSaved(tab) }
+        saved.onClose = { [weak self] in self?.closeSaved() }
+        saved.onPick = { [weak self] text in
+            self?.closeSaved()
+            self?.session?.typeLiteral(text)
+        }
+        saved.onDelete = { [weak self] tab, index in
+            if tab == .clipboard { SavedTexts.clipboard.remove(at: index) } else { SavedTexts.phrases.remove(at: index) }
+            self?.openSaved(tab)
+        }
+        saved.onKeep = { [weak self] index in
+            if let text = SavedTexts.clipboard[safe: index] { SavedTexts.addPhrase(text) }
+            self?.openSaved(.phrases)
+        }
+        saved.onClear = { [weak self] in
+            SavedTexts.clipboard = []
+            self?.openSaved(.clipboard)
+        }
+        bar.onClipboard = { [weak self] in self?.openSaved(.clipboard) }
+        bar.onPhrases = { [weak self] in self?.openSaved(.phrases) }
         grid.onTap = { [weak self] index in self?.session?.tapItem(index) }
         spellingRow.onTap = { [weak self] index in self?.session?.chooseSpelling(index) }
         bar.onExpand = { [weak self] in self?.session?.toggleExpanded() }
@@ -273,6 +307,9 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
         case .backspace:
             typing.learner.onBackspace()
             session.backspace()
+        case .deleteLine:
+            typing.learner.onContextChanged(nil)
+            deleteLine()
         case .returnKey:
             typing.learner.onCommitted("\n", nil)
             if !session.returnKey() { textDocumentProxy.insertText("\n") }
@@ -305,8 +342,10 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
         keys.setComposing(session.isComposing, choosingMark: session.offerSelection != nil)
         let expanded = session.expanded && !session.items.isEmpty
         if expanded { grid.show(session.items) }
-        grid.isHidden = !expanded
-        keys.isHidden = expanded
+        if session.isComposing, savedTab != nil { savedTab = nil }
+        saved.isHidden = savedTab == nil
+        grid.isHidden = !expanded || savedTab != nil
+        keys.isHidden = expanded || savedTab != nil
         if !session.isComposing, session.items.isEmpty {
             bar.showTools(languageName: SharedSettings.translateLanguage.chineseName, offering: hasNewCopy)
             return
@@ -318,6 +357,52 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
             expanded: expanded,
             selected: session.offerSelection
         )
+    }
+
+    // MARK: Clipboard and phrases
+
+    /// Reading the clipboard can make iOS ask to paste; it happens only on a tap here.
+    private func openSaved(_ tab: SavedTextPanelView.Tab) {
+        var note: String?
+        if tab == .clipboard {
+            if hasFullAccess {
+                let board = UIPasteboard.general
+                let concealed = board.types.contains("org.nspasteboard.ConcealedType")
+                if board.changeCount != SharedSettings.lastSavedPasteboard, board.hasStrings, !concealed, let text = board.string {
+                    SavedTexts.remember(text)
+                }
+                SharedSettings.lastSavedPasteboard = board.changeCount
+            } else if SavedTexts.clipboard.isEmpty {
+                note = "要记录剪贴板，请在「设置 → 通用 → 键盘 → 键盘 → ZnKeyboard」打开「允许完全访问」。"
+            }
+        }
+        savedTab = tab
+        saved.show(tab, tab == .clipboard ? SavedTexts.clipboard : SavedTexts.phrases, note: note)
+        render()
+    }
+
+    private func closeSaved() {
+        savedTab = nil
+        render()
+    }
+
+    /// Deletes the line before the caret; at the start of a line, the line break.
+    private func deleteLine() {
+        session?.discardComposition()
+        let proxy = textDocumentProxy
+        var first = true
+        for _ in 0..<Self.maxLineReads {
+            let before = proxy.documentContextBeforeInput ?? ""
+            if before.isEmpty { break }
+            if before.hasSuffix("\n") {
+                if first { proxy.deleteBackward() }
+                break
+            }
+            let line = before.split(separator: "\n", omittingEmptySubsequences: false).last ?? ""
+            for _ in 0..<line.count { proxy.deleteBackward() }
+            first = false
+        }
+        expectedBefore = proxy.documentContextBeforeInput
     }
 
     // MARK: AI
@@ -409,7 +494,12 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
         hasNewCopy = false
         render()
         guard canUseAI(then: { [weak self] in self?.readCopied() }) else { return }
-        guard let text = UIPasteboard.general.string?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else {
+        let copied = UIPasteboard.general.string
+        if let copied, !UIPasteboard.general.types.contains("org.nspasteboard.ConcealedType") {
+            SavedTexts.remember(copied)
+            SharedSettings.lastSavedPasteboard = UIPasteboard.general.changeCount
+        }
+        guard let text = copied?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else {
             showCardMessage("没有读到复制的内容。可在「设置 → App → ZnKeyboard → 从其他 App 粘贴」选「允许」，以后就不用每次确认。")
             return
         }

@@ -14,6 +14,8 @@ final class CandidateBarView: UIView, UIScrollViewDelegate {
     var onTranslate: (() -> Void)?
     var onOffer: (() -> Void)?
     var onDismissOffer: (() -> Void)?
+    var onClipboard: (() -> Void)?
+    var onPhrases: (() -> Void)?
 
     private let label = UILabel()
     private let scroller = CandidateScroller()
@@ -33,6 +35,8 @@ final class CandidateBarView: UIView, UIScrollViewDelegate {
     private let translate = UIButton(type: .system)
     private let offer = UIButton(type: .system)
     private let offerClose = UIButton(type: .system)
+    private let clipboardButton = UIButton(type: .system)
+    private let phrasesButton = UIButton(type: .system)
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -79,7 +83,15 @@ final class CandidateBarView: UIView, UIScrollViewDelegate {
         tools.translatesAutoresizingMaskIntoConstraints = false
         let spacer = UIView()
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        for item in [polish, translate, offer, offerClose, spacer] as [UIView] { tools.addArrangedSubview(item) }
+        for (button, symbol, action) in [(clipboardButton, Self.clipboardSymbol, #selector(clipboardTapped)), (phrasesButton, Self.phrasesSymbol, #selector(phrasesTapped))] {
+            button.setImage(UIImage(systemName: symbol, withConfiguration: UIImage.SymbolConfiguration(pointSize: 16, weight: .regular)), for: .normal)
+            button.tintColor = .label
+            button.addTarget(self, action: action, for: .touchUpInside)
+            button.translatesAutoresizingMaskIntoConstraints = false
+            button.widthAnchor.constraint(equalToConstant: 40).isActive = true
+            button.heightAnchor.constraint(equalToConstant: 34).isActive = true
+        }
+        for item in [polish, translate, offer, offerClose, spacer, clipboardButton, phrasesButton] as [UIView] { tools.addArrangedSubview(item) }
         addSubview(tools)
         NSLayoutConstraint.activate([
             tools.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
@@ -257,6 +269,11 @@ final class CandidateBarView: UIView, UIScrollViewDelegate {
     @objc private func translateTapped() { onTranslate?() }
     @objc private func offerTapped() { onOffer?() }
     @objc private func offerCloseTapped() { onDismissOffer?() }
+    @objc private func clipboardTapped() { onClipboard?() }
+    @objc private func phrasesTapped() { onPhrases?() }
+
+    static let clipboardSymbol = "doc.on.clipboard"
+    static let phrasesSymbol = "text.bubble"
     @objc private func itemTapped(_ tap: UITapGestureRecognizer) {
         let x = tap.location(in: scroller).x
         if let index = buttons.prefix(placed).firstIndex(where: { $0.frame.minX <= x && x < $0.frame.maxX + 2 }) { onTap?(index) }

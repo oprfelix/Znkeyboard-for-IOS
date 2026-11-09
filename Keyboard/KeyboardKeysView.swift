@@ -7,7 +7,7 @@ import UIKit
 final class KeyboardKeysView: UIView {
     enum Key {
         case text(String), literal(String), space, backspace, returnKey, language, nextKeyboard
-        case digit(Character), punctuation, separator, nextSpelling, emoji
+        case digit(Character), punctuation, separator, nextSpelling, emoji, deleteLine
         /// An English 9-key key: taps in a row step through its letters.
         case letters(String)
     }
@@ -66,6 +66,7 @@ final class KeyboardKeysView: UIView {
     private static let cornerRadius: CGFloat = 9
     private static let caretHold: TimeInterval = 0.35
     private static let layoutHold: TimeInterval = 0.45
+    private static let deleteLineSlide: CGFloat = 30
     private static let caretStep: CGFloat = 9
     private static let caretDim: CGFloat = 0.4
     private static let gridMarks = ["，。？！、：；…～“”—", "（）《》【】@#¥%&*", "+-=/\\|_<>[]{", "}^$€£.,?!:;'"]
@@ -134,6 +135,9 @@ final class KeyboardKeysView: UIView {
     private var showsGrid: Bool { nineKey }
     private var spaceTouch: UITouch?
     private var spaceTimer: Timer?
+    private var deleteTouch: UITouch?
+    private var deleteStartY: CGFloat = 0
+    private var deletesLine = false
     private var layoutTouch: UITouch?
     private var layoutTimer: Timer?
     private let layoutMenu = UIStackView()
@@ -628,7 +632,30 @@ final class KeyboardKeysView: UIView {
         return shown ? (choice ?? nineKey) : nil
     }
 
+    /// Sliding up from the delete key, after holding it or not, deletes the line instead.
+    private func moveDelete(_ touch: UITouch) {
+        guard let press = presses.first(where: { $0.touch === touch }) else { return }
+        let up = deleteStartY - touch.location(in: self).y > Self.deleteLineSlide
+        guard up != deletesLine else { return }
+        deletesLine = up
+        if up {
+            repeatTimer?.invalidate()
+            haptics?.impactOccurred()
+            haptics?.prepare()
+            popup.text = "删除整行"
+            popup.font = .systemFont(ofSize: 17)
+            popup.backgroundColor = Self.letterKey
+            let width: CGFloat = 96
+            popup.frame = CGRect(x: min(press.cell.frame.maxX - width, bounds.width - width - 4), y: press.cell.frame.minY - press.cell.frame.height - 8, width: width, height: press.cell.frame.height)
+            popup.isHidden = false
+            bringSubviewToFront(popup)
+        } else {
+            popup.isHidden = true
+        }
+    }
+
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
+        if let touch = deleteTouch, touches.contains(touch) { moveDelete(touch) }
         if let touch = layoutTouch, touches.contains(touch) { moveLayoutChoice(touch) }
         guard movingCaret, let touch = spaceTouch, touches.contains(touch) else { return }
         let steps = Int((touch.location(in: self).x - caretX) / Self.caretStep)
@@ -660,6 +687,9 @@ final class KeyboardKeysView: UIView {
                 type(cell, tap, sample)
             }
             if case .key(.backspace) = cell.action {
+                deleteTouch = touch
+                deleteStartY = point.y
+                deletesLine = false
                 onKey?(.backspace)
                 repeatTimer?.invalidate()
                 repeatTimer = Timer.scheduledTimer(withTimeInterval: 0.45, repeats: false) { [weak self] _ in
@@ -708,6 +738,14 @@ final class KeyboardKeysView: UIView {
         switch cell.action {
         case .key(.backspace):
             repeatTimer?.invalidate()
+            if press.touch === deleteTouch {
+                deleteTouch = nil
+                popup.font = .systemFont(ofSize: 30)
+                if deletesLine {
+                    deletesLine = false
+                    onKey?(.deleteLine)
+                }
+            }
         case .key(.text), .key(.literal), .key(.space), .key(.digit), .key(.letters):
             break
         case .key(.language):

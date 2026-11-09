@@ -208,6 +208,15 @@ public final class KeyboardSession {
         update(composing + String(digit))
     }
 
+    /// Drops what is being composed without typing it, as before deleting a whole line.
+    public func discardComposition() {
+        settle()
+        closeOffer(keep: false)
+        guard isComposing else { return }
+        learner.onCompositionAbandoned()
+        update("")
+    }
+
     /// The 9-key keyboard's ^^ key: 分隔 inside a composition.
     public func separator() {
         leaveSpelling()

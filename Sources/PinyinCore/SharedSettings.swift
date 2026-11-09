@@ -67,6 +67,12 @@ public enum SharedSettings {
         set { defaults.set(newValue, forKey: "nineKey") }
     }
 
+    /// The clipboard change last taken into the saved clipboard, so each copy is read once.
+    public static var lastSavedPasteboard: Int {
+        get { defaults.integer(forKey: "lastSavedPasteboard") }
+        set { defaults.set(newValue, forKey: "lastSavedPasteboard") }
+    }
+
     public static var keySoundEnabled: Bool {
         get { flag("keySound", default: false) }
         set { defaults.set(newValue, forKey: "keySound") }
