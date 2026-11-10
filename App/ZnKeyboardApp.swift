@@ -342,23 +342,23 @@ struct TranslatePage: View {
         .contentShape(Rectangle())
     }
 
-    /// The two directions the app translates, on glass; a tap on a language changes it.
+    /// The two directions the app translates, on glass; a tap on a language changes it. Only the
+    /// target is chosen: the AI reads whatever language the user writes or receives.
     private var languageCard: some View {
         VStack(alignment: .leading, spacing: 18) {
-            languageLine("我的回复", from: "中文", $store.translate)
+            languageLine("我的回复", $store.translate)
             Rectangle().fill(.primary.opacity(0.08)).frame(height: 0.5)
-            languageLine("收到的外文", from: "外文", $store.reading)
+            languageLine("收到的消息", $store.reading)
         }
         .padding(20)
         .glass(Card.shape)
     }
 
-    private func languageLine(_ title: String, from: String, _ value: Binding<TranslateLanguage>) -> some View {
+    private func languageLine(_ title: String, _ value: Binding<TranslateLanguage>) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Text(title).font(.footnote).foregroundStyle(.secondary)
             HStack(spacing: 12) {
-                Text(from).font(.title3.weight(.semibold))
-                Image(systemName: "arrow.right").font(.subheadline.weight(.semibold)).foregroundStyle(.tertiary)
+                Text("翻译成").font(.title3.weight(.semibold))
                 languagePicker(title, value)
                 Spacer(minLength: 0)
             }
@@ -694,6 +694,7 @@ struct FuzzyPage: View {
                 Text("平翘舌、前后鼻音分不清时打开，打哪个音都能出字。")
             }
         }
+        .ambientBackground()
         .navigationTitle("模糊音")
         .navigationBarTitleDisplayMode(.inline)
     }
@@ -729,6 +730,7 @@ struct PhrasesPage: View {
             }
         }
         .toolbar { if !store.phrases.isEmpty { EditButton() } }
+        .ambientBackground()
         .navigationTitle("常用语")
         .navigationBarTitleDisplayMode(.inline)
     }
