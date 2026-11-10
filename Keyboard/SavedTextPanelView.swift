@@ -1,15 +1,28 @@
 import UIKit
 
-/// What was copied, or the user's phrases, in the place of the keys: the list alone. The bar's
-/// icon that opened it closes it. A tap types an entry; a long press offers to delete it, or to
-/// keep a copy as a phrase.
+/// What was copied, the user's phrases, or how the AI tools work, in the place of the keys. The
+/// bar's icon that opened it closes it. A tap types an entry; a long press offers to delete it, or
+/// to keep a copy as a phrase. The help cards only read.
 final class SavedTextPanelView: UIView {
-    enum Tab { case clipboard, phrases }
+    enum Tab { case clipboard, phrases, help }
 
     var onPick: ((String) -> Void)?
     var onDelete: ((Tab, Int) -> Void)?
     var onKeep: ((Int) -> Void)?
     var onClear: (() -> Void)?
+    /// Help's button: translate what is on the clipboard now.
+    var onRead: (() -> Void)?
+
+    /// Short enough to read over a chat: what to do, then what happens. Reading comes first, the
+    /// one people forget how to reach.
+    private static let help: [(symbol: String, title: String, body: String)] = [
+        ("doc.on.doc", "翻译复制的外文",
+         "在聊天里长按对方的外文消息，点「拷贝」，回到输入框，点蓝色的「翻译刚复制的外文」。译文只给你看，不会打进输入框。按钮关掉了，也可以点下面的按钮翻译。"),
+        ("wand.and.stars", "润色",
+         "打好中文，或选中一段文字，点「润色」。看过结果点「替换」，就会换掉原来的文字。"),
+        ("translate", "翻译",
+         "打好中文，点「翻译为…」，看过译文点「替换」。要翻译成哪种语言，在 ZnKeyboard App 的「翻译」页选。"),
+    ]
 
     private static let inset: CGFloat = 8
     private static let rowGap: CGFloat = 6
@@ -21,6 +34,8 @@ final class SavedTextPanelView: UIView {
     /// Last in the clipboard list, so the panel needs no header.
     private let clear = UIButton(type: .system)
     private static let clearHeight: CGFloat = 40
+    /// In help, right under the card that explains it.
+    private let read = UIButton(type: .system)
     private let list = CandidateScroller()
     private let empty = UILabel()
     private var rows: [UIView] = []
@@ -35,6 +50,12 @@ final class SavedTextPanelView: UIView {
         clear.titleLabel?.font = .systemFont(ofSize: 15)
         clear.tintColor = .systemRed
         clear.addTarget(self, action: #selector(clearTapped), for: .touchUpInside)
+        read.setTitle("翻译剪贴板里的外文", for: .normal)
+        read.titleLabel?.font = .systemFont(ofSize: 15, weight: .medium)
+        read.setTitleColor(.systemBlue, for: .normal)
+        read.backgroundColor = UIColor.systemBlue.withAlphaComponent(0.15)
+        read.layer.cornerRadius = 9
+        read.addTarget(self, action: #selector(readTapped), for: .touchUpInside)
         list.alwaysBounceVertical = true
         list.showsVerticalScrollIndicator = false
         list.delaysContentTouches = false
@@ -43,6 +64,7 @@ final class SavedTextPanelView: UIView {
         empty.font = .systemFont(ofSize: 14)
         empty.textColor = .secondaryLabel
         list.addSubview(clear)
+        list.addSubview(read)
         for view in [list, empty] as [UIView] { addSubview(view) }
     }
 
@@ -56,6 +78,7 @@ final class SavedTextPanelView: UIView {
         self.items = items
         self.note = note
         clear.isHidden = tab != .clipboard || items.isEmpty
+        read.isHidden = tab != .help
         rebuild()
     }
 
@@ -68,9 +91,11 @@ final class SavedTextPanelView: UIView {
 
     private func rebuild() {
         rows.forEach { $0.removeFromSuperview() }
-        rows = items.enumerated().map { index, text in row(index, text) }
+        rows = tab == .help
+            ? Self.help.map { helpCard($0.symbol, $0.title, $0.body) }
+            : items.enumerated().map { index, text in row(index, text) }
         rows.forEach(list.addSubview)
-        empty.isHidden = !items.isEmpty
+        empty.isHidden = tab == .help || !items.isEmpty
         empty.text = note ?? (tab == .clipboard
             ? "还没有记录。复制文字后打开这里，就会保存下来。"
             : "还没有常用语。可以在 ZnKeyboard App 的「键盘」页添加，或在剪贴板里长按一条，存为常用语。")
@@ -105,6 +130,33 @@ final class SavedTextPanelView: UIView {
         return row
     }
 
+    /// One tool: its icon and name on the first line, how to use it below, all of it shown.
+    private func helpCard(_ symbol: String, _ title: String, _ body: String) -> UIView {
+        let card = UIView()
+        card.backgroundColor = KeyboardKeysView.letterKey
+        card.layer.cornerRadius = 9
+        let text = NSMutableAttributedString()
+        let heading = UIFont.systemFont(ofSize: 15, weight: .semibold)
+        if let image = UIImage(systemName: symbol, withConfiguration: UIImage.SymbolConfiguration(font: heading))?
+            .withTintColor(.systemBlue, renderingMode: .alwaysOriginal) {
+            text.append(NSAttributedString(attachment: NSTextAttachment(image: image)))
+            text.append(NSAttributedString(string: " "))
+        }
+        text.append(NSAttributedString(string: title + "\n", attributes: [.font: heading, .foregroundColor: UIColor.label]))
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineSpacing = 2
+        paragraph.paragraphSpacingBefore = 4
+        text.append(NSAttributedString(string: body, attributes: [
+            .font: UIFont.systemFont(ofSize: 14), .foregroundColor: UIColor.secondaryLabel, .paragraphStyle: paragraph,
+        ]))
+        let label = UILabel()
+        label.attributedText = text
+        label.numberOfLines = 0
+        label.tag = Self.labelTag
+        card.addSubview(label)
+        return card
+    }
+
     private func action(_ title: String, _ selector: Selector, destructive: Bool = false) -> UIButton {
         let button = UIButton(type: .system)
         button.setTitle(title, for: .normal)
@@ -126,12 +178,18 @@ final class SavedTextPanelView: UIView {
             let actionsWidth = (actions as? UIStackView).map { Self.width(of: $0) + 8 } ?? 0
             let label = row.viewWithTag(Self.labelTag) as! UILabel
             let textWidth = width - 24 - actionsWidth
-            let textHeight = min(label.sizeThatFits(CGSize(width: textWidth, height: .greatestFiniteMagnitude)).height, 44)
+            let fitted = label.sizeThatFits(CGSize(width: textWidth, height: .greatestFiniteMagnitude)).height
+            // Saved texts show two lines; help shows all of itself.
+            let textHeight = tab == .help ? ceil(fitted) : min(fitted, 44)
             let height = max(textHeight + 20, 46)
             row.frame = CGRect(x: Self.inset, y: y, width: width, height: height)
             label.frame = CGRect(x: 12, y: (height - textHeight) / 2, width: textWidth, height: textHeight)
             actions?.frame = CGRect(x: width - actionsWidth, y: (height - 32) / 2, width: actionsWidth - 8, height: 32)
             y += height + Self.rowGap
+            if !read.isHidden, row === rows.first {
+                read.frame = CGRect(x: Self.inset, y: y, width: width, height: Self.clearHeight)
+                y += Self.clearHeight + Self.rowGap * 2
+            }
         }
         if !clear.isHidden {
             clear.frame = CGRect(x: Self.inset, y: y, width: width, height: Self.clearHeight)
@@ -165,6 +223,7 @@ final class SavedTextPanelView: UIView {
     @objc private func keepTapped() { if let index = opened { opened = nil; onKeep?(index) } }
     @objc private func deleteTapped() { if let index = opened { opened = nil; onDelete?(tab, index) } }
     @objc private func clearTapped() { onClear?() }
+    @objc private func readTapped() { onRead?() }
 }
 
 extension Array {

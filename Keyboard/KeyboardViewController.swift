@@ -99,6 +99,8 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
         }
         bar.onClipboard = { [weak self] in self?.toggleSaved(.clipboard) }
         bar.onPhrases = { [weak self] in self?.toggleSaved(.phrases) }
+        bar.onHelp = { [weak self] in self?.toggleSaved(.help) }
+        saved.onRead = { [weak self] in self?.readFromBar() }
         grid.onTap = { [weak self] index in self?.session?.tapItem(index) }
         spellingRow.onTap = { [weak self] index in self?.session?.chooseSpelling(index) }
         bar.onExpand = { [weak self] in self?.session?.toggleExpanded() }
@@ -111,7 +113,6 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
         bar.onPolish = { [weak self] in self?.rewrite(translating: false) }
         bar.onTranslate = { [weak self] in self?.rewrite(translating: true) }
         bar.onOffer = { [weak self] in self?.readCopied() }
-        bar.onRead = { [weak self] in self?.readFromBar() }
         bar.onDismissOffer = { [weak self] in
             self?.hasNewCopy = false
             self?.render()
@@ -378,7 +379,7 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
             }
         }
         savedTab = tab
-        saved.show(tab, tab == .clipboard ? SavedTexts.clipboard : SavedTexts.phrases, note: note)
+        saved.show(tab, tab == .clipboard ? SavedTexts.clipboard : tab == .phrases ? SavedTexts.phrases : [], note: note)
         render()
     }
 
@@ -502,9 +503,9 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
     }
 
     /// What to do first, said where the user looks for it.
-    private static let readHowTo = "先在聊天里长按对方发来的外文，点「拷贝」，再回到输入框点这里，就能看到译文。"
+    private static let readHowTo = "剪贴板里还没有文字。先在聊天里长按对方发来的外文，点「拷贝」，再回到输入框，键盘上会出现「翻译刚复制的外文」。"
 
-    /// The bar's icon: translates what was copied, or says how when nothing was.
+    /// Help's button: translates what was copied, or says how when nothing was.
     private func readFromBar() {
         if hasFullAccess, !UIPasteboard.general.hasStrings {
             showCardMessage(Self.readHowTo)

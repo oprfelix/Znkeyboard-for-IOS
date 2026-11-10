@@ -16,8 +16,8 @@ final class CandidateBarView: UIView, UIScrollViewDelegate {
     var onDismissOffer: (() -> Void)?
     var onClipboard: (() -> Void)?
     var onPhrases: (() -> Void)?
-    /// Translate what was copied, there whether or not anything new was.
-    var onRead: (() -> Void)?
+    /// How polish, translate and reading what was copied work.
+    var onHelp: (() -> Void)?
 
     private let label = UILabel()
     private let scroller = CandidateScroller()
@@ -39,7 +39,7 @@ final class CandidateBarView: UIView, UIScrollViewDelegate {
     private let offerClose = UIButton(type: .system)
     private let clipboardButton = UIButton(type: .system)
     private let phrasesButton = UIButton(type: .system)
-    private let readButton = UIButton(type: .system)
+    private let helpButton = UIButton(type: .system)
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -86,11 +86,12 @@ final class CandidateBarView: UIView, UIScrollViewDelegate {
         tools.translatesAutoresizingMaskIntoConstraints = false
         let spacer = UIView()
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        let icons = [(readButton, Self.readSymbol, #selector(readTapped), "翻译复制的外文"),
-                     (clipboardButton, Self.clipboardSymbol, #selector(clipboardTapped), "剪贴板"),
-                     (phrasesButton, Self.phrasesSymbol, #selector(phrasesTapped), "常用语")]
+        let icons = [(clipboardButton, Self.clipboardSymbol, #selector(clipboardTapped), "剪贴板"),
+                     (phrasesButton, Self.phrasesSymbol, #selector(phrasesTapped), "常用语"),
+                     (helpButton, Self.helpSymbol, #selector(helpTapped), "使用说明")]
         for (button, symbol, action, name) in icons {
-            button.setImage(UIImage(systemName: symbol, withConfiguration: UIImage.SymbolConfiguration(pointSize: 16, weight: .regular)), for: .normal)
+            // Drawn to one height, so a tall clipboard and a wide bubble read as the same size.
+            button.setImage(Self.icon(symbol), for: .normal)
             button.tintColor = .label
             button.accessibilityLabel = name
             button.addTarget(self, action: action, for: .touchUpInside)
@@ -101,7 +102,7 @@ final class CandidateBarView: UIView, UIScrollViewDelegate {
         // A long language name gives way before the icons do.
         translate.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         translate.titleLabel?.lineBreakMode = .byTruncatingTail
-        for item in [polish, translate, offer, offerClose, spacer, readButton, clipboardButton, phrasesButton] as [UIView] { tools.addArrangedSubview(item) }
+        for item in [polish, translate, offer, offerClose, spacer, clipboardButton, phrasesButton, helpButton] as [UIView] { tools.addArrangedSubview(item) }
         addSubview(tools)
         NSLayoutConstraint.activate([
             tools.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
@@ -248,7 +249,7 @@ final class CandidateBarView: UIView, UIScrollViewDelegate {
     /// The toolbar when nothing is being typed; [offering] asks whether to translate what was copied.
     func showTools(languageName: String, offering: Bool, saved: SavedTextPanelView.Tab? = nil) {
         // The icon of the open panel stands out; tapping it again closes the panel.
-        for (button, tab) in [(clipboardButton, SavedTextPanelView.Tab.clipboard), (phrasesButton, .phrases)] {
+        for (button, tab) in [(clipboardButton, SavedTextPanelView.Tab.clipboard), (phrasesButton, .phrases), (helpButton, .help)] {
             button.backgroundColor = saved == tab ? KeyboardKeysView.letterKey : .clear
             button.layer.cornerRadius = 8
         }
@@ -263,8 +264,6 @@ final class CandidateBarView: UIView, UIScrollViewDelegate {
         offer.isHidden = !offering
         offerClose.isHidden = !offering
         offer.setTitle("翻译刚复制的外文", for: .normal)
-        // The offer already does what this icon does.
-        readButton.isHidden = offering
     }
 
     private func styleTool(_ button: UIButton) {
@@ -291,11 +290,20 @@ final class CandidateBarView: UIView, UIScrollViewDelegate {
     @objc private func offerCloseTapped() { onDismissOffer?() }
     @objc private func clipboardTapped() { onClipboard?() }
     @objc private func phrasesTapped() { onPhrases?() }
-    @objc private func readTapped() { onRead?() }
+    @objc private func helpTapped() { onHelp?() }
 
     static let clipboardSymbol = "doc.on.clipboard"
     static let phrasesSymbol = "text.bubble"
-    static let readSymbol = "character.bubble"
+    static let helpSymbol = "questionmark.circle"
+    private static let iconHeight: CGFloat = 20
+
+    /// The symbol scaled to [iconHeight], its stroke kept the same weight as the others'.
+    private static func icon(_ name: String) -> UIImage? {
+        guard let symbol = UIImage(systemName: name, withConfiguration: UIImage.SymbolConfiguration(pointSize: 17, weight: .regular)) else { return nil }
+        let size = CGSize(width: symbol.size.width * iconHeight / symbol.size.height, height: iconHeight)
+        return UIGraphicsImageRenderer(size: size).image { _ in symbol.draw(in: CGRect(origin: .zero, size: size)) }
+            .withRenderingMode(.alwaysTemplate)
+    }
     @objc private func itemTapped(_ tap: UITapGestureRecognizer) {
         let x = tap.location(in: scroller).x
         if let index = buttons.prefix(placed).firstIndex(where: { $0.frame.minX <= x && x < $0.frame.maxX + 2 }) { onTap?(index) }
