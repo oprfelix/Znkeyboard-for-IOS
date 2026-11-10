@@ -48,6 +48,8 @@ final class Store: ObservableObject {
     @Published var adaptiveTouch = SharedSettings.adaptiveTouch { didSet { SharedSettings.adaptiveTouch = adaptiveTouch } }
     @Published var phrases = SavedTexts.phrases { didSet { SavedTexts.phrases = phrases } }
     @Published var fullAccess = SharedSettings.keyboardHasFullAccess
+    /// nil when iOS doesn't say which keyboards are on.
+    @Published var keyboardAdded = Store.keyboardIsAdded()
     @Published var models: [String] = []
     @Published var status: (ok: Bool, text: String)?
     @Published var testing = false
@@ -62,8 +64,28 @@ final class Store: ObservableObject {
         return models.contains(model) || model.isEmpty ? models : [model] + models
     }
 
+    /// Added, or known to be added because it has run with full access.
+    var keyboardReady: Bool { keyboardAdded == true || fullAccess }
+
+    /// Setup steps still to do: add the keyboard, full access, AI.
+    var setupStepsLeft: Int {
+        [keyboardReady, fullAccess, aiConfigured].filter { !$0 }.count
+    }
+
+    /// The keyboards the user has turned on, as iOS keeps them for every app.
+    static func keyboardIsAdded() -> Bool? {
+        guard let id = Bundle.main.bundleIdentifier,
+              let list = UserDefaults.standard.array(forKey: "AppleKeyboards") as? [String]
+        else { return nil }
+        return list.contains(id + ".keyboard")
+    }
+
     /// The keyboard writes these with full access; nothing tells the app sooner.
     func refresh() {
+        let added = Store.keyboardIsAdded()
+        if keyboardAdded != added { keyboardAdded = added }
+        // Without full access the keyboard can't clear its own flag; a removed keyboard has none.
+        if added == false, SharedSettings.keyboardHasFullAccess { SharedSettings.keyboardHasFullAccess = false }
         if fullAccess != SharedSettings.keyboardHasFullAccess { fullAccess = SharedSettings.keyboardHasFullAccess }
         if nineKey != SharedSettings.nineKey { nineKey = SharedSettings.nineKey }
         let saved = SavedTexts.phrases
@@ -154,15 +176,12 @@ struct RootView: View {
 struct TranslatePage: View {
     @EnvironmentObject private var store: Store
     @Binding var guiding: Bool
-    @AppStorage("pasteConfirmed") private var pasteConfirmed = false
     @State private var path: [Route] = []
     @State private var askingForKey = false
 
     enum Route: Hashable { case apiKey }
 
-    private var stepsLeft: Int {
-        [store.fullAccess, store.fullAccess, pasteConfirmed, store.aiConfigured].filter { !$0 }.count
-    }
+    private var stepsLeft: Int { store.setupStepsLeft }
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -580,23 +599,33 @@ struct AppIcon: View {
 
 // MARK: Onboarding
 
-/// Four steps for a new user; each can wait, and the translate page offers the rest later.
+/// Three steps for a new user. Each one ticks itself when iOS shows it is done; none asks the
+/// user to say so. Every step can wait, and the translate page offers the rest later.
 struct OnboardingView: View {
     @EnvironmentObject private var store: Store
-    @AppStorage("keyboardAddedConfirmed") private var addedConfirmed = false
-    @AppStorage("pasteConfirmed") private var pasteConfirmed = false
-    /// iOS tells only the keyboard whether it has full access, so the user may say so here.
-    @AppStorage("fullAccessConfirmed") private var fullAccessConfirmed = false
     @Environment(\.scenePhase) private var scenePhase
     @State private var text = ""
     @State private var focusTry = 0
+    /// Set on the way to Settings, so coming back can bring up the keyboard to try.
+    @State private var wentToSettings = false
     let done: () -> Void
 
     private let poll = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
-    private var added: Bool { addedConfirmed || store.fullAccess }
-    private var accessOn: Bool { store.fullAccess || fullAccessConfirmed }
-    private var allDone: Bool { added && accessOn && pasteConfirmed && store.aiConfigured }
+    private enum Step: Int { case add = 1, access, ai, finished }
+
+    /// The first step not done. When iOS doesn't say whether the keyboard is added, typing with
+    /// it in step 2 shows both at once, so step 2 leads.
+    private var current: Step {
+        if !store.keyboardReady && store.keyboardAdded != nil { return .add }
+        if !store.fullAccess { return .access }
+        if !store.aiConfigured { return .ai }
+        return .finished
+    }
+
+    private var keyboardPath: String {
+        (Store.appSettingsPath + ["键盘"]).joined(separator: " › ")
+    }
 
     var body: some View {
         NavigationStack {
@@ -606,74 +635,97 @@ struct OnboardingView: View {
                         AppIcon(size: 40)
                         VStack(alignment: .leading, spacing: 2) {
                             Text("欢迎使用 ZnKeyboard").font(.headline)
-                            Text("四步就能开始，大约 3 分钟").font(.subheadline).foregroundStyle(.secondary)
+                            Text(current == .finished ? "全部设置好了" : "三步就能开始，每一步完成后会自动打勾")
+                                .font(.subheadline).foregroundStyle(.secondary)
                         }
                     }
                     .padding(.vertical, 2)
                 }
                 Section {
-                    step(1, "添加键盘", done: added,
-                         detail: "打开「\(Store.appSettingsPath.joined(separator: " › ")) › 键盘」，打开 ZnKeyboard。")
-                    if !added {
-                        Button("打开设置页") { Store.openSettings() }
-                        Button("我已添加") { addedConfirmed = true }
-                    }
-                    step(2, "打开完全访问", done: accessOn,
-                         detail: "在同一页打开「允许完全访问」。润色和翻译需要联网；普通打字不需要，也不会上传你输入的内容。")
-                    if added && !accessOn {
-                        Button("打开设置页") { Store.openSettings() }
-                        Button("我已打开") { fullAccessConfirmed = true }
-                        VStack(alignment: .leading, spacing: 6) {
-                            (Text("也可以在下面试一下：按住键盘左下角的 ") + Text(Image(systemName: "globe")) + Text("，选 ZnKeyboard，打一个字，这一步就会自动打勾。"))
-                                .font(.footnote).foregroundStyle(.secondary)
-                            TryField(text: $text, placeholder: "切到 ZnKeyboard 打一个字", focus: focusTry)
-                            if !text.isEmpty {
-                                Text("打了字还没打勾？说明「允许完全访问」还没打开，或者现在用的不是 ZnKeyboard。")
-                                    .font(.footnote).foregroundStyle(.orange)
-                            }
-                        }
-                        .padding(.vertical, 4)
-                    }
-                    NavigationLink {
-                        PasteGuidePage()
-                    } label: {
-                        step(3, "允许读取复制的内容", done: pasteConfirmed,
-                             detail: "复制外文后一键翻译、剪贴板记录都要用到，不然每次都会弹窗问你。")
-                    }
-                    NavigationLink {
-                        ConnectAIPage()
-                    } label: {
-                        step(4, "连接 AI 服务", done: store.aiConfigured,
-                             detail: "选 DeepSeek 或 Google Gemini，粘贴你的 API Key。")
-                    }
+                    addStep
+                    accessStep
+                    aiStep
                 }
                 Section {
                     Button(action: done) {
-                        Text("开始使用")
+                        Text(current == .finished ? "开始使用" : "先用起来，稍后再设置")
                             .font(.body.weight(.semibold))
                             .frame(maxWidth: .infinity)
                     }
                     .foregroundStyle(Brand.blue)
                 } footer: {
-                    if !allDone { Text("没完成的步骤，之后在「翻译」页顶部可以继续。") }
+                    if current != .finished { Text("没完成的步骤，之后在「翻译」页顶部可以继续。") }
                 }
             }
             .navigationTitle("设置向导")
             .navigationBarTitleDisplayMode(.inline)
             .scrollDismissesKeyboard(.interactively)
+            .animation(.default, value: current)
             .onReceive(poll) { _ in store.refresh() }
-            // Back from Settings with full access still to check: bring up the keyboard to try.
             .onChange(of: scenePhase) { phase in
-                if phase == .active, added, !accessOn { focusTry += 1 }
+                guard phase == .active, wentToSettings else { return }
+                wentToSettings = false
+                store.refresh()
+                // Back from Settings with full access to show: bring up the keyboard to try.
+                if current == .access { focusTry += 1 }
             }
         }
         .background(KeyboardDismisser())
     }
 
-    private func step(_ number: Int, _ title: String, done: Bool, detail: String) -> some View {
+    private func openSettings() {
+        wentToSettings = true
+        Store.openSettings()
+    }
+
+    // MARK: Steps
+
+    @ViewBuilder
+    private var addStep: some View {
+        let isCurrent = current == .add || (current == .access && !store.keyboardReady)
+        step(1, "添加键盘", done: store.keyboardReady, current: isCurrent,
+             detail: "打开「\(keyboardPath)」，打开 ZnKeyboard。")
+        if current == .add {
+            Button("去设置添加") { openSettings() }
+                .font(.body.weight(.semibold))
+        }
+    }
+
+    @ViewBuilder
+    private var accessStep: some View {
+        step(2, "打开完全访问", done: store.fullAccess, current: current == .access,
+             detail: "在同一页打开「允许完全访问」。润色和翻译需要联网；普通打字不需要，也不会上传你输入的内容。")
+        if current == .access {
+            Button("去设置打开") { openSettings() }
+                .font(.body.weight(.semibold))
+            VStack(alignment: .leading, spacing: 6) {
+                (Text("打开后回到这里，按住键盘左下角的 ") + Text(Image(systemName: "globe")) + Text("，选 ZnKeyboard，打一个字，这一步就会自动打勾。"))
+                    .font(.footnote).foregroundStyle(.secondary)
+                TryField(text: $text, placeholder: "切到 ZnKeyboard 打一个字", focus: focusTry)
+                if !text.isEmpty {
+                    Text("打了字还没打勾？说明「允许完全访问」还没打开，或者现在用的不是 ZnKeyboard。")
+                        .font(.footnote).foregroundStyle(.orange)
+                }
+            }
+            .padding(.vertical, 4)
+        }
+    }
+
+    @ViewBuilder
+    private var aiStep: some View {
+        let row = step(3, "连接 AI 服务", done: store.aiConfigured, current: current == .ai,
+                       detail: "选 DeepSeek 或 Google Gemini，粘贴你的 API Key。只打字可以先跳过。")
+        if store.aiConfigured {
+            row
+        } else {
+            NavigationLink { ConnectAIPage() } label: { row }
+        }
+    }
+
+    private func step(_ number: Int, _ title: String, done: Bool, current: Bool, detail: String) -> some View {
         HStack(alignment: .top, spacing: 12) {
             ZStack {
-                Circle().fill(done ? Color.green : Brand.blue)
+                Circle().fill(done ? Color.green : (current ? Brand.blue : Color(.systemGray3)))
                 if done {
                     Image(systemName: "checkmark").font(.caption.weight(.bold)).foregroundStyle(.white)
                 } else {
@@ -683,70 +735,15 @@ struct OnboardingView: View {
             .frame(width: 22, height: 22)
             VStack(alignment: .leading, spacing: 3) {
                 Text(title).font(.body.weight(.medium))
-                if !done { Text(detail).font(.footnote).foregroundStyle(.secondary) }
+                    .foregroundStyle(done || current ? .primary : .secondary)
+                if current { Text(detail).font(.footnote).foregroundStyle(.secondary) }
             }
         }
         .padding(.vertical, 3)
     }
 }
 
-/// Step 3: where "Paste from Other Apps" is, drawn as Settings shows it.
-struct PasteGuidePage: View {
-    @AppStorage("pasteConfirmed") private var pasteConfirmed = false
-    @Environment(\.dismiss) private var dismiss
-
-    var body: some View {
-        List {
-            Section {
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("在系统设置里这样找：").font(.subheadline.weight(.medium))
-                    HStack(spacing: 4) {
-                        ForEach(Array(Store.appSettingsPath.enumerated()), id: \.offset) { index, part in
-                            if index > 0 { Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.tertiary) }
-                            Text(part).font(.footnote)
-                                .padding(.horizontal, 7).padding(.vertical, 3)
-                                .background(Color(.tertiarySystemFill), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-                        }
-                    }
-                    Text("找到「从其他 App 粘贴」，改成「允许」：").font(.subheadline)
-                    VStack(spacing: 0) {
-                        HStack { Text("键盘"); Spacer(); Image(systemName: "chevron.right").font(.caption).foregroundStyle(.tertiary) }
-                            .padding(.horizontal, 12).frame(height: 40)
-                        Divider().padding(.leading, 12)
-                        HStack {
-                            Text("从其他 App 粘贴")
-                            Spacer()
-                            Text("允许").foregroundStyle(Brand.blue)
-                            Image(systemName: "chevron.right").font(.caption).foregroundStyle(.tertiary)
-                        }
-                        .padding(.horizontal, 12).frame(height: 40)
-                        .background(Brand.blue.opacity(0.08))
-                        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Brand.blue, lineWidth: 1.5))
-                    }
-                    .font(.subheadline)
-                    .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                    .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Color.primary.opacity(0.08)))
-                }
-                .padding(.vertical, 6)
-                .listRowBackground(Color(.systemGroupedBackground))
-            }
-            Section {
-                Button("直接打开设置页") { Store.openSettings() }
-                Button("我已设置好") {
-                    pasteConfirmed = true
-                    dismiss()
-                }
-                .font(.body.weight(.semibold))
-            } footer: {
-                Text("看不到这一项？先在任意 App 里复制一段文字，切到 ZnKeyboard 点「翻译复制的内容」，系统弹出询问时点「允许粘贴」，这一项就会出现。")
-            }
-        }
-        .navigationTitle("允许读取复制的内容")
-        .navigationBarTitleDisplayMode(.inline)
-    }
-}
-
-/// Step 4: a provider, a key, and a test that ends the step.
+/// Step 3: a provider, a key, and a test that ends the step.
 struct ConnectAIPage: View {
     @EnvironmentObject private var store: Store
     @Environment(\.dismiss) private var dismiss

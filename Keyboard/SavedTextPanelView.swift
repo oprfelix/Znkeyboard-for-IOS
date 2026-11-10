@@ -15,6 +15,10 @@ final class SavedTextPanelView: UIView {
     private static let inset: CGFloat = 8
     private static let headerHeight: CGFloat = 40
     private static let rowGap: CGFloat = 6
+    /// A row's tag is its index, and viewWithTag finds the row itself first, so these stay clear
+    /// of any index: with tag 1, the second row was taken for its own label and crashed.
+    private static let labelTag = -1
+    private static let actionsTag = -2
 
     private let tabs = UIStackView()
     private let clipboardTab = UIButton(type: .system)
@@ -108,7 +112,7 @@ final class SavedTextPanelView: UIView {
         label.text = text.replacingOccurrences(of: "\n", with: " ")
         label.font = .systemFont(ofSize: 16)
         label.numberOfLines = 2
-        label.tag = 1
+        label.tag = Self.labelTag
         row.addSubview(label)
         row.tag = index
         row.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(rowTapped)))
@@ -119,7 +123,7 @@ final class SavedTextPanelView: UIView {
             let actions = UIStackView()
             actions.axis = .horizontal
             actions.spacing = 6
-            actions.tag = 2
+            actions.tag = Self.actionsTag
             if tab == .clipboard { actions.addArrangedSubview(action("存为常用语", #selector(keepTapped))) }
             actions.addArrangedSubview(action("删除", #selector(deleteTapped), destructive: true))
             row.addSubview(actions)
@@ -144,9 +148,9 @@ final class SavedTextPanelView: UIView {
         guard width > 0 else { return }
         var y: CGFloat = 4
         for row in rows {
-            let actions = row.viewWithTag(2)
+            let actions = row.viewWithTag(Self.actionsTag)
             let actionsWidth = (actions as? UIStackView).map { Self.width(of: $0) + 8 } ?? 0
-            let label = row.viewWithTag(1) as! UILabel
+            let label = row.viewWithTag(Self.labelTag) as! UILabel
             let textWidth = width - 24 - actionsWidth
             let textHeight = min(label.sizeThatFits(CGSize(width: textWidth, height: .greatestFiniteMagnitude)).height, 44)
             let height = max(textHeight + 20, 46)

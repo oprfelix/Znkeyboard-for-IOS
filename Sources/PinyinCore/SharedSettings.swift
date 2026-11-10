@@ -127,6 +127,12 @@ public enum SharedSettings {
         set { defaults.set(newValue, forKey: "keyboardHasFullAccess") }
     }
 
+    /// Whether the keyboard has said once where to stop iOS asking before each paste.
+    public static var pasteTipShown: Bool {
+        get { defaults.bool(forKey: "pasteTipShown") }
+        set { defaults.set(newValue, forKey: "pasteTipShown") }
+    }
+
     /// The pasteboard's change count already offered, so one copy is offered once.
     public static var lastOfferedPasteboard: Int {
         get { defaults.integer(forKey: "lastOfferedPasteboard") }

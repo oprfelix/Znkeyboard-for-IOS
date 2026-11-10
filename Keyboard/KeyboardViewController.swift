@@ -494,7 +494,15 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
         hasNewCopy = false
         render()
         guard canUseAI(then: { [weak self] in self?.readCopied() }) else { return }
+        // A read that waits means iOS asked the user; say once how to stop it asking.
+        let started = Date()
         let copied = UIPasteboard.general.string
+        let wasAsked = Date().timeIntervalSince(started) > 0.4
+        var tip: String?
+        if wasAsked, copied != nil, !SharedSettings.pasteTipShown {
+            SharedSettings.pasteTipShown = true
+            tip = "不想每次都确认？在「设置 › App › ZnKeyboard › 从其他 App 粘贴」选「允许」。"
+        }
         if let copied, !UIPasteboard.general.types.contains("org.nspasteboard.ConcealedType") {
             SavedTexts.remember(copied)
             SharedSettings.lastSavedPasteboard = UIPasteboard.general.changeCount
@@ -508,7 +516,7 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
             showCardMessage("复制的内容已经是\(language.chineseName)，或者不是需要翻译的文字。")
             return
         }
-        run(title: "译文 · \(language.chineseName)", keepsResult: false) { [client] in
+        run(title: "译文 · \(language.chineseName)", keepsResult: false, tip: tip) { [client] in
             try await client.read(text, in: language, with: SharedSettings.provider)
         }
     }
@@ -531,7 +539,7 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
         }
     }
 
-    private func run(title: String, keepsResult: Bool, _ work: @escaping () async throws -> String) {
+    private func run(title: String, keepsResult: Bool, tip: String? = nil, _ work: @escaping () async throws -> String) {
         request?.cancel()
         card.showWorking(title: title)
         showCard()
@@ -540,7 +548,8 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
                 let result = try await work()
                 guard let self, !Task.isCancelled else { return }
                 if keepsResult { self.replacement?.text = result }
-                self.card.showResult(title: title, body: result, actionTitle: keepsResult ? "替换" : nil)
+                let body = tip.map { result + "\n\n" + $0 } ?? result
+                self.card.showResult(title: title, body: body, actionTitle: keepsResult ? "替换" : nil)
                 self.showCard()
             } catch {
                 guard let self, !Task.isCancelled else { return }

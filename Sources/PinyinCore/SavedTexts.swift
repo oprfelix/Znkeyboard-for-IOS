@@ -10,8 +10,11 @@ public enum SavedTexts {
 
     private static let defaults = UserDefaults(suiteName: SharedSettings.appGroup) ?? .standard
 
+    /// What a new user starts with; once the list is changed, it is theirs, even when empty.
+    public static let defaultPhrases = ["马上到！", "我在忙，晚点回复。"]
+
     public static var phrases: [String] {
-        get { defaults.stringArray(forKey: "phrases") ?? [] }
+        get { defaults.stringArray(forKey: "phrases") ?? defaultPhrases }
         set { defaults.set(Array(newValue.prefix(maxPhrases)), forKey: "phrases") }
     }
 
