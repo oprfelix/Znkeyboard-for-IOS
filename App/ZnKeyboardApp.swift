@@ -50,6 +50,8 @@ final class Store: ObservableObject {
     @Published var fullAccess = SharedSettings.keyboardHasFullAccess
     /// nil when iOS doesn't say which keyboards are on.
     @Published var keyboardAdded = Store.keyboardIsAdded()
+    /// The keyboard has translated copied text once: the guide's practice is done.
+    @Published var readTried = SharedSettings.readTried
     @Published var models: [String] = []
     @Published var status: (ok: Bool, text: String)?
     @Published var testing = false
@@ -87,6 +89,7 @@ final class Store: ObservableObject {
         // Without full access the keyboard can't clear its own flag; a removed keyboard has none.
         if added == false, SharedSettings.keyboardHasFullAccess { SharedSettings.keyboardHasFullAccess = false }
         if fullAccess != SharedSettings.keyboardHasFullAccess { fullAccess = SharedSettings.keyboardHasFullAccess }
+        if readTried != SharedSettings.readTried { readTried = SharedSettings.readTried }
         if nineKey != SharedSettings.nineKey { nineKey = SharedSettings.nineKey }
         let saved = SavedTexts.phrases
         if phrases != saved { phrases = saved }
@@ -205,7 +208,10 @@ struct TranslatePage: View {
                     languageRow("我的回复", "中文 → ", $store.translate)
                     languageRow("收到的外文", "外文 → ", $store.reading)
                 } footer: {
-                    Text("键盘上显示「翻译为\(store.translate.chineseName)」；复制外文后点「翻译复制的内容」。")
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("回复外国朋友：打好中文，点键盘上的「翻译为\(store.translate.chineseName)」。")
+                        Text("看懂对方的外文：长按对方的消息 → 拷贝 → 回到输入框，点「翻译刚复制的外文」或键盘右上方的 ") + Text(Image(systemName: "character.bubble")) + Text("。")
+                    }
                 }
                 Section {
                     Picker(selection: $store.kind) {
@@ -608,13 +614,19 @@ struct OnboardingView: View {
     @State private var focusTry = 0
     /// Typed a while ago and still no tick: only then is it worth saying what may be wrong.
     @State private var stillWaiting = false
+    @State private var practiceText = ""
+    @State private var practiceFocus = 0
+    @State private var copiedSample = false
     /// Set on the way to Settings, so coming back can bring up the keyboard to try.
     @State private var wentToSettings = false
     let done: () -> Void
 
     private let poll = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
-    private enum Step: Int { case add = 1, access, ai, finished }
+    private enum Step: Int { case add = 1, access, ai, practice, finished }
+
+    /// What the practice has the user copy: a message as a friend abroad might send it.
+    private static let sample = "Are you free this weekend?"
 
     /// The first step not done. When iOS doesn't say whether the keyboard is added, typing with
     /// it in step 2 shows both at once, so step 2 leads.
@@ -622,6 +634,7 @@ struct OnboardingView: View {
         if !store.keyboardReady && store.keyboardAdded != nil { return .add }
         if !store.fullAccess { return .access }
         if !store.aiConfigured { return .ai }
+        if !store.readTried { return .practice }
         return .finished
     }
 
@@ -637,7 +650,7 @@ struct OnboardingView: View {
                         AppIcon(size: 40)
                         VStack(alignment: .leading, spacing: 2) {
                             Text("欢迎使用 ZnKeyboard").font(.headline)
-                            Text(current == .finished ? "全部设置好了" : "三步就能开始，每一步完成后会自动打勾")
+                            Text(current == .finished ? "全部设置好了" : "跟着做，每一步完成后会自动打勾")
                                 .font(.subheadline).foregroundStyle(.secondary)
                         }
                     }
@@ -647,6 +660,7 @@ struct OnboardingView: View {
                     addStep
                     accessStep
                     aiStep
+                    practiceStep
                 }
                 Section {
                     Button(action: done) {
@@ -727,6 +741,39 @@ struct OnboardingView: View {
             row
         } else {
             NavigationLink { ConnectAIPage() } label: { row }
+        }
+    }
+
+    /// Copy a foreign message, translate it on the keyboard: done once, the feature is found.
+    @ViewBuilder
+    private var practiceStep: some View {
+        step(4, "试一次：翻译对方发来的外文", done: store.readTried, current: current == .practice,
+             detail: store.aiConfigured
+                ? "以后在微信等聊天 App 里：长按对方的消息 → 拷贝 → 回到输入框，点键盘上的「翻译刚复制的外文」。现在先在这里试一次。"
+                : "连接 AI 服务后就能试。")
+        if current == .practice {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("假设对方发来这句话：").font(.footnote).foregroundStyle(.secondary)
+                HStack {
+                    Text(Self.sample).font(.body)
+                    Spacer()
+                    Button(copiedSample ? "已复制" : "复制") {
+                        UIPasteboard.general.string = Self.sample
+                        copiedSample = true
+                        practiceFocus += 1
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(Brand.blue)
+                }
+                .padding(10)
+                .background(Color(.tertiarySystemFill), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                Text(copiedSample
+                     ? "在弹出的键盘上点「翻译刚复制的外文」。第一次用会先问是否同意发送，点「同意」；系统问是否允许粘贴时，点「允许粘贴」。看到中文译文，这一步就会打勾。"
+                     : "点「复制」，就像在聊天里长按消息后点「拷贝」。")
+                    .font(.footnote).foregroundStyle(.secondary)
+                TryField(text: $practiceText, placeholder: "键盘会在这里弹出", focus: practiceFocus)
+            }
+            .padding(.vertical, 4)
         }
     }
 

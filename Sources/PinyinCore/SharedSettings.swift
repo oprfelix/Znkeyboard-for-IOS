@@ -127,6 +127,12 @@ public enum SharedSettings {
         set { defaults.set(newValue, forKey: "keyboardHasFullAccess") }
     }
 
+    /// Set by the keyboard the first time it translates copied text, so the guide's practice ticks.
+    public static var readTried: Bool {
+        get { defaults.bool(forKey: "readTried") }
+        set { defaults.set(newValue, forKey: "readTried") }
+    }
+
     /// Whether the keyboard has said once where to stop iOS asking before each paste.
     public static var pasteTipShown: Bool {
         get { defaults.bool(forKey: "pasteTipShown") }

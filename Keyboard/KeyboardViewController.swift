@@ -111,6 +111,7 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
         bar.onPolish = { [weak self] in self?.rewrite(translating: false) }
         bar.onTranslate = { [weak self] in self?.rewrite(translating: true) }
         bar.onOffer = { [weak self] in self?.readCopied() }
+        bar.onRead = { [weak self] in self?.readFromBar() }
         bar.onDismissOffer = { [weak self] in
             self?.hasNewCopy = false
             self?.render()
@@ -186,6 +187,8 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
         keys.showsGlobe = needsInputModeSwitchKey
+        // Each time it comes up it is a keyboard, not the panel left open last time.
+        savedTab = nil
         applySettings()
         noticeCopied()
         render()
@@ -462,6 +465,11 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
     }
 
     private func showCard() {
+        // A card over the clipboard or phrases would be two things at once.
+        if savedTab != nil {
+            savedTab = nil
+            render()
+        }
         card.isHidden = false
         cardHeight.isActive = false
         layoutCard()
@@ -493,6 +501,18 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
         render()
     }
 
+    /// What to do first, said where the user looks for it.
+    private static let readHowTo = "先在聊天里长按对方发来的外文，点「拷贝」，再回到输入框点这里，就能看到译文。"
+
+    /// The bar's icon: translates what was copied, or says how when nothing was.
+    private func readFromBar() {
+        if hasFullAccess, !UIPasteboard.general.hasStrings {
+            showCardMessage(Self.readHowTo)
+            return
+        }
+        readCopied()
+    }
+
     private func readCopied() {
         hasNewCopy = false
         render()
@@ -519,7 +539,7 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
             showCardMessage("复制的内容已经是\(language.chineseName)，或者不是需要翻译的文字。")
             return
         }
-        run(title: "译文 · \(language.chineseName)", keepsResult: false, tip: tip) { [client] in
+        run(title: "译文 · \(language.chineseName)", keepsResult: false, tip: tip, done: { SharedSettings.readTried = true }) { [client] in
             try await client.read(text, in: language, with: SharedSettings.provider)
         }
     }
@@ -542,7 +562,8 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
         }
     }
 
-    private func run(title: String, keepsResult: Bool, tip: String? = nil, _ work: @escaping () async throws -> String) {
+    /// [done] runs once a result has come back.
+    private func run(title: String, keepsResult: Bool, tip: String? = nil, done: (() -> Void)? = nil, _ work: @escaping () async throws -> String) {
         request?.cancel()
         card.showWorking(title: title)
         showCard()
@@ -554,6 +575,7 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
                 let body = tip.map { result + "\n\n" + $0 } ?? result
                 self.card.showResult(title: title, body: body, actionTitle: keepsResult ? "替换" : nil)
                 self.showCard()
+                done?()
             } catch {
                 guard let self, !Task.isCancelled else { return }
                 self.replacement = nil
