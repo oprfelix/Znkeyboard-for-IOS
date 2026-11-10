@@ -8,7 +8,7 @@ public enum AIProviderKind: String, CaseIterable {
     public var label: String {
         switch self {
         case .deepSeek: return "DeepSeek"
-        case .gemini: return "Google Gemini"
+        case .gemini: return "Google"
         case .openAICompatible: return "OpenAI compatible"
         }
     }
@@ -25,7 +25,8 @@ public enum AIProviderKind: String, CaseIterable {
     public var models: [String] {
         switch self {
         case .deepSeek: return ["deepseek-flash"]
-        case .gemini: return ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-2.5-flash-lite"]
+        // 2.5 models are open only to accounts that used them before; a new key gets an error.
+        case .gemini: return ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite"]
         case .openAICompatible: return []
         }
     }
@@ -276,7 +277,11 @@ public final class AIClient {
         case .timedOut: return t("AI 服务响应超时，请稍后再试。", "The AI service took too long. Try again later.")
         case .offline: return t("无法连接 AI 服务，请检查网络。", "Couldn't reach the AI service. Check your connection.")
         case .badAddress: return t("接口地址必须以 https 开头。", "Use an https address.")
-        case let .http(code, _):
+        case let .http(code, reply):
+            // Google answers a wrong key with 400, not 401.
+            if code == 400, reply.lowercased().contains("api key") || reply.contains("API_KEY_INVALID") {
+                return t("API Key 无效（HTTP 400），请在设置里检查。", "The API key is invalid (HTTP 400). Check settings.")
+            }
             switch code {
             case 400: return t("请求被拒绝（HTTP 400），请检查模型名称。", "The request was rejected (HTTP 400). Check the model name.")
             case 401, 403: return t("API Key 无效或没有权限（HTTP \(code)），请在设置里检查。", "The API key is invalid or lacks access (HTTP \(code)). Check settings.")

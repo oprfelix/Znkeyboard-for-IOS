@@ -71,6 +71,12 @@ func aiChecks() async {
     do { _ = try await client.polish("x", with: provider); check("401 throws", false) } catch {
         check("401 says the key", AIClient.message(for: error, chinese: true).contains("API Key"))
     }
+    // Google's reply to a wrong key, as its OpenAI endpoint sends it.
+    StubProtocol.replies = [(400, "[{\"error\":{\"code\":400,\"message\":\"Please pass a valid API key\",\"status\":\"INVALID_ARGUMENT\"}}]")]
+    do { _ = try await client.polish("x", with: provider); check("Google 400 throws", false) } catch {
+        let said = AIClient.message(for: error, chinese: true)
+        check("Google's 400 says the key", said.contains("API Key 无效"), said)
+    }
     StubProtocol.replies = [(200, "{\"choices\":[{\"finish_reason\":\"length\",\"message\":{\"content\":\"{\"}}]}")]
     do { _ = try await client.polish("x", with: provider); check("cut off throws", false) } catch {
         check("cut off is too long", (error as? AIError) == .tooLong)

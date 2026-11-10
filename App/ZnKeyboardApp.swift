@@ -118,7 +118,7 @@ final class Store: ObservableObject {
     static func providerName(_ kind: AIProviderKind) -> String {
         switch kind {
         case .deepSeek: return "DeepSeek"
-        case .gemini: return "Google Gemini"
+        case .gemini: return "Google"
         case .openAICompatible: return "自定义"
         }
     }
@@ -722,7 +722,7 @@ struct OnboardingView: View {
     @ViewBuilder
     private var aiStep: some View {
         let row = step(3, "连接 AI 服务", done: store.aiConfigured, current: current == .ai,
-                       detail: "选 DeepSeek 或 Google Gemini，粘贴你的 API Key。只打字可以先跳过。")
+                       detail: "选 DeepSeek 或 Google，粘贴你的 API Key。只打字可以先跳过。")
         if store.aiConfigured {
             row
         } else {
@@ -761,7 +761,7 @@ struct ConnectAIPage: View {
             Section {
                 Picker("服务商", selection: $store.kind) {
                     Text("DeepSeek").tag(AIProviderKind.deepSeek)
-                    Text("Google Gemini").tag(AIProviderKind.gemini)
+                    Text("Google").tag(AIProviderKind.gemini)
                 }
                 .pickerStyle(.segmented)
                 .listRowBackground(Color.clear)
