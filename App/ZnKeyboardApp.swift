@@ -184,24 +184,25 @@ struct TranslatePage: View {
 
     enum Route: Hashable { case apiKey }
 
-    private var stepsLeft: Int { store.setupStepsLeft }
 
     var body: some View {
         NavigationStack(path: $path) {
             List {
-                Section {
-                    statusLine
-                    if stepsLeft > 0 {
-                        Button { guiding = true } label: {
-                            HStack {
-                                Label("继续完成设置", systemImage: "list.bullet.circle").foregroundStyle(Brand.blue)
-                                Spacer()
-                                Text("还差 \(stepsLeft) 步").foregroundStyle(.secondary)
-                                Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
+                // Shown only while something stands in the way; a ready app opens on the languages.
+                if !store.fullAccess || !store.aiConfigured {
+                    Section {
+                        if !store.fullAccess {
+                            Button { guiding = true } label: {
+                                notice("键盘还没启用", detail: "完成设置后才能用 ZnKeyboard 打字", action: "去设置")
                             }
-                            .contentShape(Rectangle())
+                            .buttonStyle(.plain)
                         }
-                        .buttonStyle(.plain)
+                        if !store.aiConfigured {
+                            Button { path = [.apiKey] } label: {
+                                notice("还没配置 API Key", detail: "翻译和润色要连接 AI 服务才能用，普通打字不受影响", action: "去配置")
+                            }
+                            .buttonStyle(.plain)
+                        }
                     }
                 }
                 Section {
@@ -214,11 +215,8 @@ struct TranslatePage: View {
                     }
                 }
                 Section {
-                    Picker(selection: $store.kind) {
-                        ForEach(AIProviderKind.allCases, id: \.self) { Text(Store.providerName($0)).tag($0) }
-                    } label: {
-                        Label("服务商", systemImage: "sparkles")
-                    }
+                    choiceRow("服务商", "sparkles", value: Store.providerName(store.kind), selection: $store.kind,
+                              options: AIProviderKind.allCases.map { ($0, Store.providerName($0)) })
                     if store.kind == .openAICompatible {
                         HStack {
                             Label("接口地址", systemImage: "link")
@@ -254,15 +252,20 @@ struct TranslatePage: View {
         }
     }
 
-    private var statusLine: some View {
-        HStack(spacing: 8) {
-            Circle().fill(store.fullAccess ? Color.green : Color.orange).frame(width: 8, height: 8)
-            Text(store.fullAccess ? "键盘已就绪" : "键盘还没启用").font(.subheadline)
-            Spacer()
-            if store.aiConfigured {
-                Text(Store.providerName(store.kind)).font(.subheadline).foregroundStyle(.secondary)
+    /// One thing to fix: what it is, why it matters, and where to go.
+    private func notice(_ title: String, detail: String, action: String) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.orange)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.body.weight(.medium))
+                Text(detail).font(.footnote).foregroundStyle(.secondary)
             }
+            Spacer(minLength: 8)
+            Text(action).font(.subheadline).foregroundStyle(Brand.blue)
+            Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
         }
+        .padding(.vertical, 2)
+        .contentShape(Rectangle())
     }
 
     @ViewBuilder
@@ -299,12 +302,29 @@ struct TranslatePage: View {
                     .autocorrectionDisabled()
             }
         } else {
-            Picker(selection: $store.model) {
-                ForEach(store.modelChoices, id: \.self) { Text($0).tag($0) }
-            } label: {
-                Label("模型", systemImage: "cpu")
-            }
+            choiceRow("模型", "cpu", value: store.model, selection: $store.model,
+                      options: store.modelChoices.map { ($0, $0) })
         }
+    }
+
+    /// A choice that reads like the rows around it: the value in grey, not the tint, with a small
+    /// mark that it opens a menu.
+    private func choiceRow<Value: Hashable>(_ title: String, _ symbol: String, value: String,
+                                            selection: Binding<Value>, options: [(Value, String)]) -> some View {
+        Menu {
+            Picker(title, selection: selection) {
+                ForEach(options, id: \.0) { Text($0.1).tag($0.0) }
+            }
+        } label: {
+            HStack {
+                Label { Text(title).foregroundStyle(.primary) } icon: { Image(systemName: symbol).foregroundStyle(Brand.blue) }
+                Spacer()
+                Text(value).foregroundStyle(.secondary).lineLimit(1)
+                Image(systemName: "chevron.up.chevron.down").font(.footnote.weight(.medium)).foregroundStyle(.tertiary)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 }
 
