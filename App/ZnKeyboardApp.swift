@@ -606,6 +606,8 @@ struct OnboardingView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var text = ""
     @State private var focusTry = 0
+    /// Typed a while ago and still no tick: only then is it worth saying what may be wrong.
+    @State private var stillWaiting = false
     /// Set on the way to Settings, so coming back can bring up the keyboard to try.
     @State private var wentToSettings = false
     let done: () -> Void
@@ -684,7 +686,7 @@ struct OnboardingView: View {
     private var addStep: some View {
         let isCurrent = current == .add || (current == .access && !store.keyboardReady)
         step(1, "添加键盘", done: store.keyboardReady, current: isCurrent,
-             detail: "打开「\(keyboardPath)」，打开 ZnKeyboard。")
+             detail: "点下面的按钮，在设置里依次点「\(keyboardPath)」，打开 ZnKeyboard。如果打开的是设置首页，往下滑找到「App」。")
         if current == .add {
             Button("去设置添加") { openSettings() }
                 .font(.body.weight(.semibold))
@@ -694,20 +696,26 @@ struct OnboardingView: View {
     @ViewBuilder
     private var accessStep: some View {
         step(2, "打开完全访问", done: store.fullAccess, current: current == .access,
-             detail: "在同一页打开「允许完全访问」。润色和翻译需要联网；普通打字不需要，也不会上传你输入的内容。")
+             detail: "在同一页打开「允许完全访问」，系统会弹出一段提示，点「允许」。润色和翻译需要联网；普通打字不需要，也不会上传你输入的内容。")
         if current == .access {
             Button("去设置打开") { openSettings() }
                 .font(.body.weight(.semibold))
             VStack(alignment: .leading, spacing: 6) {
-                (Text("打开后回到这里，按住键盘左下角的 ") + Text(Image(systemName: "globe")) + Text("，选 ZnKeyboard，打一个字，这一步就会自动打勾。"))
+                (Text("打开后回到这里，点一下下面的输入框，再点键盘左下角的 ") + Text(Image(systemName: "globe")) + Text("，切到 ZnKeyboard，这一步就会自动打勾。"))
                     .font(.footnote).foregroundStyle(.secondary)
-                TryField(text: $text, placeholder: "切到 ZnKeyboard 打一个字", focus: focusTry)
-                if !text.isEmpty {
-                    Text("打了字还没打勾？说明「允许完全访问」还没打开，或者现在用的不是 ZnKeyboard。")
+                TryField(text: $text, placeholder: "点这里，切到 ZnKeyboard", focus: focusTry)
+                if stillWaiting {
+                    Text("还没打勾？看看「允许完全访问」是不是打开了，以及现在用的是不是 ZnKeyboard（键盘上方有「润色」按钮）。")
                         .font(.footnote).foregroundStyle(.orange)
                 }
             }
             .padding(.vertical, 4)
+            .task(id: text.isEmpty) {
+                stillWaiting = false
+                guard !text.isEmpty else { return }
+                try? await Task.sleep(nanoseconds: 4_000_000_000)
+                if !Task.isCancelled { stillWaiting = true }
+            }
         }
     }
 
@@ -762,10 +770,13 @@ struct ConnectAIPage: View {
             Section {
                 KeyField(key: $store.apiKey)
             } footer: {
-                if let guide = Store.keyGuide(store.kind) {
-                    HStack(spacing: 4) {
-                        Text("还没有 Key？")
-                        Link(guide.title + " ↗", destination: guide.url)
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("API Key 是一串密钥，相当于你在 AI 服务商那里的账号凭证。注册后在网站上点「创建」，复制下来粘贴到这里。")
+                    if let guide = Store.keyGuide(store.kind) {
+                        HStack(spacing: 4) {
+                            Text("还没有 Key？")
+                            Link(guide.title + " ↗", destination: guide.url)
+                        }
                     }
                 }
             }
