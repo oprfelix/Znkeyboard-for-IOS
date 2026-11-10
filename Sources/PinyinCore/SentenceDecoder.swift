@@ -85,6 +85,7 @@ public final class SentenceDecoder {
         static let lmWordCost: Float = 1
         static let lmWeight: Float = 0.6
         static let picksWeight: Float = 0.05
+        static let picksScale = 300
         static let pairsWeight: Float = 0.1
         static let initialCost: Float = 2.5
         static let initialBeforeVowelCost: Float = 9
@@ -257,7 +258,9 @@ public final class SentenceDecoder {
             var personal: Float = 0
             if learnedUses > 0 {
                 keep -= C.picksWeight
-                personal += C.picksWeight * Float(match.uses) / Float(learnedUses)
+                // Shares of at most the last few hundred picks: over all of them, a word picked once
+                // after weeks of typing would count for nothing next to the language model.
+                personal += C.picksWeight * min(Float(match.uses) / Float(min(learnedUses, C.picksScale)), 1)
             }
             if pairTotal > 0 {
                 keep -= C.pairsWeight

@@ -42,6 +42,12 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        // The app being typed in leaving the screen is the last sure moment to write anything.
+        for name in [Notification.Name.NSExtensionHostWillResignActive, .NSExtensionHostDidEnterBackground] {
+            NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.persistLearning() }
+            }
+        }
         guard let root = view else { return }
         root.isMultipleTouchEnabled = true
         for item in [card, spellingRow, bar, keys, grid] as [UIView] {
@@ -178,7 +184,11 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
         let learner = PinyinLearner(data: data, lexicon: lexicon)
         let english = bundle.path(forResource: "english", ofType: "txt").flatMap { try? String(contentsOfFile: $0, encoding: .utf8) }.map(EnglishWords.init)
         session = KeyboardSession(lexicon: lexicon, learner: learner, english: english, target: self, decodesInBackground: true, touchLearner: typing.learner)
-        session?.onChange = { [weak self] in self?.render() }
+        session?.onChange = { [weak self] in
+            self?.render()
+            self?.scheduleSave()
+        }
+        savedClock = learner.data.clock
     }
 
     private static var learnedFile: URL {
@@ -225,11 +235,34 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
     }
 
     private func saveLearning() {
-        typing.save()
         session?.settle()
-        guard let data = session?.learner.data.encode() else { return }
+        persistLearning()
+    }
+
+    /// iOS may end the keyboard without a viewWillDisappear (back to the home screen, the app
+    /// suspended), so what was learned is written a few seconds after typing stops, not only then.
+    private var saveTimer: Timer?
+    private var savedClock = 0
+    private static let saveDelay: TimeInterval = 3
+
+    private func scheduleSave() {
+        guard let clock = session?.learner.data.clock, clock != savedClock else { return }
+        saveTimer?.invalidate()
+        saveTimer = Timer.scheduledTimer(withTimeInterval: Self.saveDelay, repeats: false) { [weak self] _ in
+            self?.persistLearning()
+        }
+    }
+
+    /// Writes the picks and the touch model as they are, without waiting for a reading in progress.
+    private func persistLearning() {
+        saveTimer?.invalidate()
+        saveTimer = nil
+        typing.save()
+        guard let learner = session?.learner, learner.data.clock != savedClock else { return }
+        let data = learner.data.encode()
         try? FileManager.default.createDirectory(at: Self.learnedFile.deletingLastPathComponent(), withIntermediateDirectories: true)
         try? data.write(to: Self.learnedFile, options: .atomic)
+        savedClock = learner.data.clock
     }
 
     override func textDidChange(_ textInput: UITextInput?) {
