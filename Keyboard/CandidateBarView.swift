@@ -5,6 +5,16 @@ class CandidateScroller: UIScrollView {
     override func touchesShouldCancel(in view: UIView) -> Bool { true }
 }
 
+/// An icon that answers past its drawn edge: the bar's full height, and half the gap to each
+/// neighbour, so a tap a little off still lands.
+final class ToolIconButton: UIButton {
+    var hitOutset = UIEdgeInsets(top: -7, left: -5, bottom: -7, right: -5)
+
+    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+        bounds.inset(by: hitOutset).contains(point)
+    }
+}
+
 /// The pinyin above and a row of candidates, as on Android.
 final class CandidateBarView: UIView, UIScrollViewDelegate {
     var onTap: ((Int) -> Void)?
@@ -37,9 +47,9 @@ final class CandidateBarView: UIView, UIScrollViewDelegate {
     private let translate = UIButton(type: .system)
     private let offer = UIButton(type: .system)
     private let offerClose = UIButton(type: .system)
-    private let clipboardButton = UIButton(type: .system)
-    private let phrasesButton = UIButton(type: .system)
-    private let helpButton = UIButton(type: .system)
+    private let clipboardButton = ToolIconButton(type: .system)
+    private let phrasesButton = ToolIconButton(type: .system)
+    private let helpButton = ToolIconButton(type: .system)
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -96,9 +106,11 @@ final class CandidateBarView: UIView, UIScrollViewDelegate {
             button.accessibilityLabel = name
             button.addTarget(self, action: action, for: .touchUpInside)
             button.translatesAutoresizingMaskIntoConstraints = false
-            button.widthAnchor.constraint(equalToConstant: 36).isActive = true
+            button.widthAnchor.constraint(equalToConstant: 40).isActive = true
             button.heightAnchor.constraint(equalToConstant: 34).isActive = true
         }
+        // The last icon reaches the bar's edge.
+        helpButton.hitOutset.right = -8
         // A long language name gives way before the icons do.
         translate.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         translate.titleLabel?.lineBreakMode = .byTruncatingTail
@@ -107,8 +119,9 @@ final class CandidateBarView: UIView, UIScrollViewDelegate {
         NSLayoutConstraint.activate([
             tools.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
             tools.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
-            tools.centerYAnchor.constraint(equalTo: centerYAnchor),
-            tools.heightAnchor.constraint(equalToConstant: 34),
+            // The whole bar's height, so the icons' wider hit areas are inside the stack too.
+            tools.topAnchor.constraint(equalTo: topAnchor),
+            tools.bottomAnchor.constraint(equalTo: bottomAnchor),
             polish.heightAnchor.constraint(equalToConstant: 34),
             translate.heightAnchor.constraint(equalToConstant: 34),
             offer.heightAnchor.constraint(equalToConstant: 34),
