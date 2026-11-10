@@ -532,15 +532,17 @@ struct AboutPage: View {
     var body: some View {
         NavigationStack {
             List {
+                // The app's own face: a large icon, its name, and the version under it.
                 Section {
-                    HStack(spacing: 12) {
-                        AppIcon(size: 44)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("ZnKeyboard").font(.headline)
-                            Text("版本 \(Self.version)").font(.subheadline).foregroundStyle(.secondary)
-                        }
+                    VStack(spacing: 10) {
+                        AppIcon(size: 96)
+                            .shadow(color: .black.opacity(0.12), radius: 8, y: 4)
+                        Text("ZnKeyboard").font(.title2.weight(.semibold))
+                        Text("版本 \(Self.version)").font(.subheadline).foregroundStyle(.secondary)
                     }
-                    .padding(.vertical, 2)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 8)
+                    .listRowBackground(Color.clear)
                 }
                 Section {
                     HStack {
