@@ -16,7 +16,78 @@ struct ZnKeyboardApp: App {
 enum Brand {
     /// The blue of the app icon.
     static let blue = Color(red: 0.27, green: 0.52, blue: 1)
+    /// Where the hero card's gradient ends: the blue leaning to violet.
+    static let violet = Color(red: 0.45, green: 0.38, blue: 0.98)
 }
+
+/// A setting's icon: the tint on a pale tile of itself. One colour for every row, so the page
+/// stays quiet and the language card is the only thing in colour.
+struct TileLabelStyle: LabelStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(spacing: 12) {
+            configuration.icon
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(Brand.blue)
+                .frame(width: 29, height: 29)
+                .background(Brand.blue.opacity(0.14), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            configuration.title
+        }
+    }
+}
+
+extension LabelStyle where Self == TileLabelStyle {
+    static var tile: TileLabelStyle { TileLabelStyle() }
+}
+
+/// The corner every card of ours shares, close to the list's own rows.
+enum Card {
+    static let radius: CGFloat = 24
+    static var shape: RoundedRectangle { RoundedRectangle(cornerRadius: radius, style: .continuous) }
+}
+
+extension View {
+    /// Liquid Glass from iOS 26, frosted material before it. A tint colours the glass itself.
+    @ViewBuilder
+    func glass<S: Shape>(_ shape: S, tint: Color? = nil, interactive: Bool = false) -> some View {
+        if #available(iOS 26, *) {
+            let base = tint.map { Glass.regular.tint($0) } ?? .regular
+            glassEffect(interactive ? base.interactive() : base, in: shape)
+        } else if let tint {
+            background(tint, in: shape)
+        } else {
+            background(.ultraThinMaterial, in: shape)
+        }
+    }
+
+    /// The pages' backdrop: the grouped grey with a faint wash of the brand colours at the top,
+    /// for the glass to show.
+    func ambientBackground() -> some View {
+        scrollContentBackground(.hidden).background(AmbientBackground())
+    }
+}
+
+struct AmbientBackground: View {
+    @Environment(\.colorScheme) private var scheme
+
+    var body: some View {
+        let strength = scheme == .dark ? 0.32 : 0.22
+        ZStack(alignment: .top) {
+            Color(.systemGroupedBackground)
+            GeometryReader { geo in
+                Circle().fill(Brand.blue).frame(width: geo.size.width * 0.9)
+                    .blur(radius: 90).opacity(strength)
+                    .offset(x: -geo.size.width * 0.3, y: -geo.size.width * 0.35)
+                Circle().fill(Brand.violet).frame(width: geo.size.width * 0.8)
+                    .blur(radius: 90).opacity(strength)
+                    .offset(x: geo.size.width * 0.45, y: -geo.size.width * 0.15)
+            }
+        }
+        .ignoresSafeArea()
+    }
+}
+
+/// A light tick under the finger when a choice changes.
+@MainActor func selectionTick() { UISelectionFeedbackGenerator().selectionChanged() }
 
 /// Everything the pages show, saved as it changes; the keyboard reads the same settings.
 @MainActor
@@ -155,7 +226,7 @@ struct RootView: View {
 
     var body: some View {
         TabView {
-            TranslatePage(guiding: $guiding).tabItem { Label("翻译", systemImage: "translate") }
+            TranslatePage(guiding: $guiding).tabItem { Label("翻译", systemImage: "bubble.left.and.text.bubble.right") }
             KeyboardPage().tabItem { Label("键盘", systemImage: "keyboard") }
             AboutPage().tabItem { Label("关于", systemImage: "info.circle") }
         }
@@ -176,126 +247,186 @@ struct RootView: View {
 
 // MARK: Translate
 
+/// Where the translate page leads: the AI service, and the key inside it.
+enum TranslateRoute: Hashable { case ai, apiKey }
+
 struct TranslatePage: View {
     @EnvironmentObject private var store: Store
     @Binding var guiding: Bool
-    @State private var path: [Route] = []
+    @State private var path: [TranslateRoute] = []
     @State private var askingForKey = false
-
-    enum Route: Hashable { case apiKey }
-
 
     var body: some View {
         NavigationStack(path: $path) {
             List {
-                // Shown only while something stands in the way; a ready app opens on the languages.
-                if !store.fullAccess || !store.aiConfigured {
-                    Section {
-                        if !store.fullAccess {
-                            Button { guiding = true } label: {
-                                notice("键盘还没启用", detail: "完成设置后才能用 ZnKeyboard 打字", action: "去设置")
-                            }
-                            .buttonStyle(.plain)
-                        }
-                        if !store.aiConfigured {
-                            Button { path = [.apiKey] } label: {
-                                notice("还没配置 API Key", detail: "翻译和润色要连接 AI 服务才能用，普通打字不受影响", action: "去配置")
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
+                Section {
+                    status
+                        .listRowInsets(EdgeInsets())
+                        .listRowBackground(Color.clear)
                 }
                 Section {
-                    languageRow("我的回复", "中文 → ", $store.translate)
-                    languageRow("收到的外文", "外文 → ", $store.reading)
-                } footer: {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("回复外国朋友：打好中文，点键盘上的「翻译为\(store.translate.chineseName)」。")
-                        Text("看懂对方的外文：长按对方的消息 → 拷贝 → 回到输入框，点「翻译刚复制的外文」或键盘右上方的 ") + Text(Image(systemName: "character.bubble")) + Text("。")
-                    }
+                    languageCard
+                        .padding(1)
+                        .listRowInsets(EdgeInsets())
+                        .listRowBackground(Color.clear)
                 }
                 Section {
-                    choiceRow("服务商", "sparkles", value: Store.providerName(store.kind), selection: $store.kind,
-                              options: AIProviderKind.allCases.map { ($0, Store.providerName($0)) })
-                    if store.kind == .openAICompatible {
+                    NavigationLink(value: TranslateRoute.ai) {
                         HStack {
-                            Label("接口地址", systemImage: "link")
-                            TextField("https://", text: $store.baseURL)
-                                .multilineTextAlignment(.trailing)
-                                .textInputAutocapitalization(.never)
-                                .autocorrectionDisabled()
-                        }
-                    }
-                    NavigationLink(value: Route.apiKey) {
-                        HStack {
-                            Label("API Key", systemImage: "key")
+                            Label("AI 服务", systemImage: "sparkles").labelStyle(.tile)
                             Spacer()
-                            Text(store.apiKey.isEmpty ? "未填写" : "已保存").foregroundStyle(store.apiKey.isEmpty ? .orange : .secondary)
+                            Text(store.aiConfigured ? Store.providerName(store.kind) : "未配置")
+                                .foregroundStyle(store.aiConfigured ? Color.secondary : Color.orange)
                         }
                     }
-                    modelRow
-                } header: {
-                    Text("AI 服务")
-                } footer: {
-                    Label("文字从手机直接发给你选的服务商，不经过我们的服务器。", systemImage: "lock.shield")
                 }
             }
+            .ambientBackground()
             .navigationTitle("翻译")
-            .navigationBarTitleDisplayMode(.inline)
-            .navigationDestination(for: Route.self) { _ in ApiKeyPage() }
+            .navigationDestination(for: TranslateRoute.self) { route in
+                switch route {
+                case .ai: AIServicePage()
+                case .apiKey: ApiKeyPage()
+                }
+            }
+            .onChange(of: store.translate) { _ in selectionTick() }
+            .onChange(of: store.reading) { _ in selectionTick() }
             .alert("请先配置 API", isPresented: $askingForKey) {
                 Button("稍后", role: .cancel) {}
-                Button("去配置") { path = [.apiKey] }
+                Button("去配置") { path = [.ai, .apiKey] }
             } message: {
                 Text("翻译使用你自己的 AI 服务，填好 API Key 后就能选择语言。")
             }
         }
     }
 
-    /// One thing to fix: what it is, why it matters, and where to go.
-    private func notice(_ title: String, detail: String, action: String) -> some View {
-        HStack(alignment: .top, spacing: 10) {
-            Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.orange)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(.body.weight(.medium))
-                Text(detail).font(.footnote).foregroundStyle(.secondary)
+    /// A quiet line when all is ready; a card with the next step when something is missing.
+    @ViewBuilder
+    private var status: some View {
+        if !store.fullAccess {
+            Button { guiding = true } label: {
+                notice("键盘还没启用", "完成设置后才能用 ZnKeyboard 打字", action: "去设置")
+            }
+            .buttonStyle(.plain)
+        } else if !store.aiConfigured {
+            Button { path = [.ai, .apiKey] } label: {
+                notice("还没配置 API Key", "翻译和润色要连接 AI 服务", action: "去配置")
+            }
+            .buttonStyle(.plain)
+        } else {
+            HStack(spacing: 8) {
+                Circle().fill(.green).frame(width: 7, height: 7)
+                Text("已就绪").font(.subheadline.weight(.medium))
+                Text("完全访问 · AI 已配置").font(.subheadline).foregroundStyle(.secondary)
+                Spacer()
+            }
+            .padding(.horizontal, 4)
+        }
+    }
+
+    private func notice(_ title: String, _ detail: String, action: String) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: "exclamationmark.circle.fill").font(.title3).foregroundStyle(.orange)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title).font(.subheadline.weight(.semibold))
+                Text(detail).font(.caption).foregroundStyle(.secondary)
             }
             Spacer(minLength: 8)
-            Text(action).font(.subheadline).foregroundStyle(Brand.blue)
-            Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
+            Text(action).font(.subheadline.weight(.semibold)).foregroundStyle(.white)
+                .padding(.horizontal, 14).padding(.vertical, 7)
+                .glass(Capsule(), tint: .orange, interactive: true)
         }
-        .padding(.vertical, 2)
+        .padding(.horizontal, 16).padding(.vertical, 12)
+        .glass(Card.shape)
+        .padding(1)
         .contentShape(Rectangle())
     }
 
-    @ViewBuilder
-    private func languageRow(_ title: String, _ from: String, _ value: Binding<TranslateLanguage>) -> some View {
-        let row = HStack {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(.footnote).foregroundStyle(.secondary)
-                Text(from + value.wrappedValue.chineseName).font(.body.weight(.semibold)).foregroundStyle(.primary)
-            }
-            Spacer()
-            Text("更改").font(.subheadline).foregroundStyle(.secondary)
+    /// The two directions the app translates, on glass; a tap on a language changes it.
+    private var languageCard: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            languageLine("我的回复", from: "中文", $store.translate)
+            Rectangle().fill(.primary.opacity(0.08)).frame(height: 0.5)
+            languageLine("收到的外文", from: "外文", $store.reading)
         }
+        .padding(20)
+        .glass(Card.shape)
+    }
+
+    private func languageLine(_ title: String, from: String, _ value: Binding<TranslateLanguage>) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(title).font(.footnote).foregroundStyle(.secondary)
+            HStack(spacing: 12) {
+                Text(from).font(.title3.weight(.semibold))
+                Image(systemName: "arrow.right").font(.subheadline.weight(.semibold)).foregroundStyle(.tertiary)
+                languagePicker(title, value)
+                Spacer(minLength: 0)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func languagePicker(_ title: String, _ value: Binding<TranslateLanguage>) -> some View {
+        let pill = HStack(spacing: 6) {
+            Text(value.wrappedValue.chineseName).font(.title3.weight(.semibold))
+            Image(systemName: "chevron.down").font(.caption.weight(.bold)).opacity(0.8)
+        }
+        .foregroundStyle(.white)
+        .padding(.horizontal, 16).padding(.vertical, 8)
+        .glass(Capsule(), tint: Brand.blue, interactive: true)
         if store.aiConfigured {
             Menu {
                 Picker(title, selection: value) {
                     ForEach(TranslateLanguage.all, id: \.self) { Text($0.chineseName).tag($0) }
                 }
-            } label: { row.contentShape(Rectangle()) }
+            } label: { pill }
             .buttonStyle(.plain)
         } else {
-            Button { askingForKey = true } label: { row.contentShape(Rectangle()) }
-                .buttonStyle(.plain)
+            Button { askingForKey = true } label: { pill }.buttonStyle(.plain)
         }
+    }
+}
+
+/// The service, its key and model: set once, so they live a level down from the languages.
+struct AIServicePage: View {
+    @EnvironmentObject private var store: Store
+
+    var body: some View {
+        List {
+            Section {
+                choiceRow("服务商", "sparkles", value: Store.providerName(store.kind), selection: $store.kind,
+                          options: AIProviderKind.allCases.map { ($0, Store.providerName($0)) })
+                if store.kind == .openAICompatible {
+                    HStack {
+                        Label("接口地址", systemImage: "link").labelStyle(.tile)
+                        TextField("https://", text: $store.baseURL)
+                            .multilineTextAlignment(.trailing)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                    }
+                }
+                NavigationLink(value: TranslateRoute.apiKey) {
+                    HStack {
+                        Label("API Key", systemImage: "key.fill").labelStyle(.tile)
+                        Spacer()
+                        Text(store.apiKey.isEmpty ? "未填写" : "已保存").foregroundStyle(store.apiKey.isEmpty ? .orange : .secondary)
+                    }
+                }
+                modelRow
+            } footer: {
+                Label("文字从手机直接发给服务商，不经过我们的服务器。", systemImage: "lock.shield")
+            }
+        }
+        .ambientBackground()
+        .navigationTitle("AI 服务")
+        .navigationBarTitleDisplayMode(.inline)
     }
 
     @ViewBuilder
     private var modelRow: some View {
         if store.kind == .openAICompatible && store.models.isEmpty {
             HStack {
-                Label("模型", systemImage: "cpu")
+                Label("模型", systemImage: "cpu").labelStyle(.tile)
                 TextField("模型名称", text: $store.model)
                     .multilineTextAlignment(.trailing)
                     .textInputAutocapitalization(.never)
@@ -317,7 +448,7 @@ struct TranslatePage: View {
             }
         } label: {
             HStack {
-                Label { Text(title).foregroundStyle(.primary) } icon: { Image(systemName: symbol).foregroundStyle(Brand.blue) }
+                Label { Text(title).foregroundStyle(.primary) } icon: { Image(systemName: symbol) }.labelStyle(.tile)
                 Spacer()
                 Text(value).foregroundStyle(.secondary).lineLimit(1)
                 Image(systemName: "chevron.up.chevron.down").font(.footnote.weight(.medium)).foregroundStyle(.tertiary)
@@ -364,6 +495,7 @@ struct ApiKeyPage: View {
                 }
             }
         }
+        .ambientBackground()
         .navigationTitle("API Key")
         .navigationBarTitleDisplayMode(.inline)
     }
@@ -418,22 +550,22 @@ struct KeyboardPage: View {
                     Text("试一试")
                 }
                 Section {
-                    Picker("中文键盘", selection: $store.nineKey) {
-                        Text("全键盘").tag(false)
-                        Text("九宫格").tag(true)
+                    HStack(spacing: 12) {
+                        LayoutCard(title: "全键盘", nineKey: false, selected: !store.nineKey) { store.nineKey = false }
+                        LayoutCard(title: "九宫格", nineKey: true, selected: store.nineKey) { store.nineKey = true }
                     }
-                    .pickerStyle(.segmented)
+                    .padding(1)
+                    .listRowInsets(EdgeInsets())
+                    .listRowBackground(Color.clear)
                 } header: {
                     Text("布局")
-                } footer: {
-                    Text("也可以在键盘上长按「中」切换。")
                 }
                 Section("输入") {
                     NavigationLink {
                         FuzzyPage()
                     } label: {
                         HStack {
-                            Label("模糊音", systemImage: "waveform")
+                            Label("模糊音", systemImage: "waveform").labelStyle(.tile)
                             Spacer()
                             Text("\(FuzzyRules.labelled.filter { store.fuzzyRules.contains($0.rule) }.count) 组").foregroundStyle(.secondary)
                         }
@@ -442,30 +574,88 @@ struct KeyboardPage: View {
                         PhrasesPage()
                     } label: {
                         HStack {
-                            Label("常用语", systemImage: "text.bubble")
+                            Label("常用语", systemImage: "text.bubble.fill").labelStyle(.tile)
                             Spacer()
                             Text("\(store.phrases.count) 条").foregroundStyle(.secondary)
                         }
                     }
-                    Toggle(isOn: $store.numberRow) { Label("数字行", systemImage: "number") }
-                    Toggle(isOn: $store.autoCapitalize) { Label("英文句首大写", systemImage: "capslock") }
-                    Toggle(isOn: $store.doubleSpace) { Label("双击空格输入句号", systemImage: "space") }
+                    Toggle(isOn: $store.numberRow) { Label("数字行", systemImage: "number").labelStyle(.tile) }
+                    Toggle(isOn: $store.autoCapitalize) { Label("英文句首大写", systemImage: "shift.fill").labelStyle(.tile) }
+                    Toggle(isOn: $store.doubleSpace) { Label("双击空格输入句号", systemImage: "space").labelStyle(.tile) }
                 }
                 Section {
-                    Toggle(isOn: $store.haptics) { Label("按键振动", systemImage: "iphone.radiowaves.left.and.right") }
-                    Toggle(isOn: $store.keySound) { Label("按键声音", systemImage: "speaker.wave.2") }
-                    Toggle(isOn: $store.keyPopup) { Label("按键气泡", systemImage: "bubble.middle.bottom") }
-                    Toggle(isOn: $store.adaptiveTouch) { Label("按键学习", systemImage: "hand.point.up.left") }
+                    Toggle(isOn: $store.haptics) { Label("按键振动", systemImage: "iphone.radiowaves.left.and.right").labelStyle(.tile) }
+                    Toggle(isOn: $store.keySound) { Label("按键声音", systemImage: "speaker.wave.2.fill").labelStyle(.tile) }
+                    Toggle(isOn: $store.keyPopup) { Label("按键气泡", systemImage: "bubble.middle.bottom.fill").labelStyle(.tile) }
+                    Toggle(isOn: $store.adaptiveTouch) { Label("按键学习", systemImage: "hand.point.up.left.fill").labelStyle(.tile) }
                 } header: {
                     Text("触控与手感")
                 } footer: {
-                    Text("振动和声音需要打开完全访问。按键学习会记住你的落点，按偏时自动纠正。")
+                    Text("振动和声音需要完全访问。")
                 }
             }
             .scrollDismissesKeyboard(.interactively)
+            .ambientBackground()
             .navigationTitle("键盘")
-            .navigationBarTitleDisplayMode(.inline)
         }
+    }
+}
+
+/// One of the two layouts, drawn as a small keyboard; the chosen one is outlined in the tint.
+struct LayoutCard: View {
+    let title: String
+    let nineKey: Bool
+    let selected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button { if !selected { selectionTick() }; action() } label: {
+            VStack(spacing: 10) {
+                preview
+                    .padding(10)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 78)
+                    .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                HStack(spacing: 5) {
+                    Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                        .foregroundStyle(selected ? Brand.blue : Color.secondary.opacity(0.5))
+                    Text(title).font(.subheadline.weight(selected ? .semibold : .regular)).foregroundStyle(.primary)
+                }
+            }
+            .padding(12)
+            .glass(Card.shape)
+            .overlay(Card.shape.strokeBorder(selected ? Brand.blue : .clear, lineWidth: 2))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .animation(.easeOut(duration: 0.15), value: selected)
+    }
+
+    /// Rows of keys for the full layout, a 3 x 3 grid for nine keys; under both, the row with the
+    /// wide space bar, so it reads as a keyboard at a glance.
+    private var preview: some View {
+        let rows = nineKey ? [3, 3, 3] : [10, 9, 7]
+        return VStack(spacing: 3.5) {
+            ForEach(Array(rows.enumerated()), id: \.offset) { _, count in
+                HStack(spacing: nineKey ? 4 : 2.5) {
+                    ForEach(0..<count, id: \.self) { _ in key.frame(width: nineKey ? 22 : nil) }
+                }
+                .frame(maxWidth: nineKey ? nil : .infinity)
+                .padding(.horizontal, nineKey ? 0 : CGFloat(10 - count) * 3)
+            }
+            HStack(spacing: nineKey ? 4 : 2.5) {
+                key.frame(width: nineKey ? 12 : 16)
+                if !nineKey { key.frame(width: 16) }
+                key.frame(maxWidth: .infinity)
+                key.frame(width: nineKey ? 12 : 22)
+            }
+            .frame(width: nineKey ? 74 : nil)
+        }
+    }
+
+    private var key: some View {
+        RoundedRectangle(cornerRadius: 2, style: .continuous)
+            .fill(selected ? Brand.blue.opacity(0.55) : Color.secondary.opacity(0.35))
     }
 }
 
@@ -561,39 +751,33 @@ struct AboutPage: View {
                         Text("版本 \(Self.version)").font(.subheadline).foregroundStyle(.secondary)
                     }
                     .frame(maxWidth: .infinity)
-                    .padding(.vertical, 8)
+                    .padding(.top, 12)
+                    .padding(.bottom, 8)
                     .listRowBackground(Color.clear)
                 }
                 Section {
-                    HStack {
-                        Label { Text("键盘状态") } icon: { Image(systemName: "keyboard").foregroundStyle(Brand.blue) }
-                        Spacer()
-                        Text(store.fullAccess ? "已就绪" : "未启用").foregroundStyle(store.fullAccess ? Color.secondary : Color.orange)
-                    }
                     Button { Store.openSettings() } label: {
                         HStack {
-                            Label { Text("系统设置").foregroundStyle(.primary) } icon: { Image(systemName: "gear").foregroundStyle(Brand.blue) }
+                            Label { Text("系统设置").foregroundStyle(.primary) } icon: { Image(systemName: "gearshape.fill") }.labelStyle(.tile)
                             Spacer()
                             Image(systemName: "arrow.up.right").font(.footnote).foregroundStyle(.tertiary)
                         }
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                }
-                Section {
-                    link("隐私政策", "hand.raised", "https://znkeyboard.2amz.com/privacy")
+                    link("隐私政策", "hand.raised.fill", "https://znkeyboard.2amz.com/privacy")
                     link("官网", "globe", "https://zn.2amz.com")
                 }
             }
+            .ambientBackground()
             .navigationTitle("关于")
-            .navigationBarTitleDisplayMode(.inline)
         }
     }
 
     private func link(_ title: String, _ symbol: String, _ url: String) -> some View {
         Link(destination: URL(string: url)!) {
             HStack {
-                Label { Text(title).foregroundStyle(.primary) } icon: { Image(systemName: symbol).foregroundStyle(Brand.blue) }
+                Label { Text(title).foregroundStyle(.primary) } icon: { Image(systemName: symbol) }.labelStyle(.tile)
                 Spacer()
                 Image(systemName: "arrow.up.right").font(.footnote).foregroundStyle(.tertiary)
             }
