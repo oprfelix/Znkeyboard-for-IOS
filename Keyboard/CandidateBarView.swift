@@ -236,7 +236,12 @@ final class CandidateBarView: UIView, UIScrollViewDelegate {
     }
 
     /// The toolbar when nothing is being typed; [offering] asks whether to translate what was copied.
-    func showTools(languageName: String, offering: Bool) {
+    func showTools(languageName: String, offering: Bool, saved: SavedTextPanelView.Tab? = nil) {
+        // The icon of the open panel stands out; tapping it again closes the panel.
+        for (button, tab) in [(clipboardButton, SavedTextPanelView.Tab.clipboard), (phrasesButton, .phrases)] {
+            button.backgroundColor = saved == tab ? KeyboardKeysView.letterKey : .clear
+            button.layer.cornerRadius = 8
+        }
         label.isHidden = true
         scroller.isHidden = true
         fix.isHidden = true

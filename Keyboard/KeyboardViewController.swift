@@ -81,8 +81,6 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
             saved.bottomAnchor.constraint(equalTo: keys.bottomAnchor),
         ])
         saved.isHidden = true
-        saved.onTab = { [weak self] tab in self?.openSaved(tab) }
-        saved.onClose = { [weak self] in self?.closeSaved() }
         saved.onPick = { [weak self] text in
             self?.closeSaved()
             self?.session?.typeLiteral(text)
@@ -99,8 +97,8 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
             SavedTexts.clipboard = []
             self?.openSaved(.clipboard)
         }
-        bar.onClipboard = { [weak self] in self?.openSaved(.clipboard) }
-        bar.onPhrases = { [weak self] in self?.openSaved(.phrases) }
+        bar.onClipboard = { [weak self] in self?.toggleSaved(.clipboard) }
+        bar.onPhrases = { [weak self] in self?.toggleSaved(.phrases) }
         grid.onTap = { [weak self] index in self?.session?.tapItem(index) }
         spellingRow.onTap = { [weak self] index in self?.session?.chooseSpelling(index) }
         bar.onExpand = { [weak self] in self?.session?.toggleExpanded() }
@@ -347,7 +345,7 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
         grid.isHidden = !expanded || savedTab != nil
         keys.isHidden = expanded || savedTab != nil
         if !session.isComposing, session.items.isEmpty {
-            bar.showTools(languageName: SharedSettings.translateLanguage.chineseName, offering: hasNewCopy)
+            bar.showTools(languageName: SharedSettings.translateLanguage.chineseName, offering: hasNewCopy, saved: savedTab)
             return
         }
         bar.show(
@@ -379,6 +377,11 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
         savedTab = tab
         saved.show(tab, tab == .clipboard ? SavedTexts.clipboard : SavedTexts.phrases, note: note)
         render()
+    }
+
+    /// The bar's icon opens its panel, and closes it when it is already open.
+    private func toggleSaved(_ tab: SavedTextPanelView.Tab) {
+        if savedTab == tab { closeSaved() } else { openSaved(tab) }
     }
 
     private func closeSaved() {

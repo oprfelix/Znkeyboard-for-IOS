@@ -1,30 +1,26 @@
 import UIKit
 
-/// What was copied and the user's phrases, in the place of the keys. A tap types an entry; a long
-/// press offers to delete it, or to keep a copy as a phrase.
+/// What was copied, or the user's phrases, in the place of the keys: the list alone. The bar's
+/// icon that opened it closes it. A tap types an entry; a long press offers to delete it, or to
+/// keep a copy as a phrase.
 final class SavedTextPanelView: UIView {
     enum Tab { case clipboard, phrases }
 
     var onPick: ((String) -> Void)?
-    var onClose: (() -> Void)?
-    var onTab: ((Tab) -> Void)?
     var onDelete: ((Tab, Int) -> Void)?
     var onKeep: ((Int) -> Void)?
     var onClear: (() -> Void)?
 
     private static let inset: CGFloat = 8
-    private static let headerHeight: CGFloat = 40
     private static let rowGap: CGFloat = 6
     /// A row's tag is its index, and viewWithTag finds the row itself first, so these stay clear
     /// of any index: with tag 1, the second row was taken for its own label and crashed.
     private static let labelTag = -1
     private static let actionsTag = -2
 
-    private let tabs = UIStackView()
-    private let clipboardTab = UIButton(type: .system)
-    private let phrasesTab = UIButton(type: .system)
+    /// Last in the clipboard list, so the panel needs no header.
     private let clear = UIButton(type: .system)
-    private let close = UIButton(type: .system)
+    private static let clearHeight: CGFloat = 40
     private let list = CandidateScroller()
     private let empty = UILabel()
     private var rows: [UIView] = []
@@ -35,24 +31,10 @@ final class SavedTextPanelView: UIView {
 
     override init(frame: CGRect) {
         super.init(frame: frame)
-        for (button, title) in [(clipboardTab, "剪贴板"), (phrasesTab, "常用语")] {
-            button.setTitle(title, for: .normal)
-            button.titleLabel?.font = .systemFont(ofSize: 15, weight: .medium)
-            button.layer.cornerRadius = 8
-            button.contentEdgeInsets = UIEdgeInsets(top: 0, left: 12, bottom: 0, right: 12)
-        }
-        clipboardTab.addTarget(self, action: #selector(clipboardTapped), for: .touchUpInside)
-        phrasesTab.addTarget(self, action: #selector(phrasesTapped), for: .touchUpInside)
-        tabs.axis = .horizontal
-        tabs.spacing = 4
-        [clipboardTab, phrasesTab].forEach(tabs.addArrangedSubview)
-        clear.setTitle("清空", for: .normal)
+        clear.setTitle("清空剪贴板", for: .normal)
         clear.titleLabel?.font = .systemFont(ofSize: 15)
         clear.tintColor = .systemRed
         clear.addTarget(self, action: #selector(clearTapped), for: .touchUpInside)
-        close.setImage(UIImage(systemName: "chevron.up", withConfiguration: UIImage.SymbolConfiguration(pointSize: 18)), for: .normal)
-        close.tintColor = .label
-        close.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
         list.alwaysBounceVertical = true
         list.showsVerticalScrollIndicator = false
         list.delaysContentTouches = false
@@ -60,7 +42,8 @@ final class SavedTextPanelView: UIView {
         empty.textAlignment = .center
         empty.font = .systemFont(ofSize: 14)
         empty.textColor = .secondaryLabel
-        for view in [tabs, clear, close, list, empty] as [UIView] { addSubview(view) }
+        list.addSubview(clear)
+        for view in [list, empty] as [UIView] { addSubview(view) }
     }
 
     @available(*, unavailable)
@@ -72,22 +55,13 @@ final class SavedTextPanelView: UIView {
         self.tab = tab
         self.items = items
         self.note = note
-        for (button, on) in [(clipboardTab, tab == .clipboard), (phrasesTab, tab == .phrases)] {
-            button.backgroundColor = on ? KeyboardKeysView.letterKey : .clear
-            button.tintColor = on ? .label : .secondaryLabel
-        }
         clear.isHidden = tab != .clipboard || items.isEmpty
         rebuild()
     }
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        let h = Self.headerHeight
-        tabs.frame = CGRect(x: Self.inset, y: 4, width: Self.width(of: tabs), height: h - 8)
-        close.frame = CGRect(x: bounds.width - 44, y: 0, width: 44, height: h)
-        clear.sizeToFit()
-        clear.frame = CGRect(x: close.frame.minX - clear.bounds.width - 8, y: 0, width: clear.bounds.width, height: h)
-        list.frame = CGRect(x: 0, y: h, width: bounds.width, height: bounds.height - h)
+        list.frame = bounds
         empty.frame = list.frame.insetBy(dx: 24, dy: 16)
         placeRows()
     }
@@ -159,6 +133,10 @@ final class SavedTextPanelView: UIView {
             actions?.frame = CGRect(x: width - actionsWidth, y: (height - 32) / 2, width: actionsWidth - 8, height: 32)
             y += height + Self.rowGap
         }
+        if !clear.isHidden {
+            clear.frame = CGRect(x: Self.inset, y: y, width: width, height: Self.clearHeight)
+            y += Self.clearHeight
+        }
         list.contentSize = CGSize(width: bounds.width, height: y + 4)
     }
 
@@ -187,9 +165,6 @@ final class SavedTextPanelView: UIView {
     @objc private func keepTapped() { if let index = opened { opened = nil; onKeep?(index) } }
     @objc private func deleteTapped() { if let index = opened { opened = nil; onDelete?(tab, index) } }
     @objc private func clearTapped() { onClear?() }
-    @objc private func closeTapped() { onClose?() }
-    @objc private func clipboardTapped() { onTab?(.clipboard) }
-    @objc private func phrasesTapped() { onTab?(.phrases) }
 }
 
 extension Array {
