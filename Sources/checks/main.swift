@@ -170,6 +170,13 @@ func fuzzyChecks(_ args: [String]) {
     let plain = strict.candidates("shang").prefix(20).map(\.text)
     let folded = loose.candidates("san").prefix(20).map(\.text)
     check("fuzzy on finds 上 for san", folded.contains("上"), folded)
+    // Another split of the whole input, among the first candidates: yu e, xi an.
+    let yue = loose.candidates("yue").prefix(6).map(\.text)
+    check("yue offers 余额 on the first screen", yue.contains("余额") && yue.first != "余额", yue)
+    let xian = loose.candidates("xian").prefix(6).map(\.text)
+    check("xian offers 西安 on the first screen", xian.contains("西安") && xian.first != "西安", xian)
+    let jian = loose.candidates("jian").prefix(6).map(\.text)
+    check("jian offers no rare split like 积案", !jian.contains("积案") && !jian.contains("几案"), jian)
     check("fuzzy off keeps san apart", !strict.candidates("san").prefix(20).map(\.text).contains("上") && plain.contains("上"))
 }
 

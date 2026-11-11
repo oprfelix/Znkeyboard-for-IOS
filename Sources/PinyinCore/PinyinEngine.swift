@@ -31,6 +31,15 @@ public final class PinyinEngine {
         static let partialMatchLimit = 8
         static let singleSyllableLimit = 40
         static let maxSentences = 6
+        /// Other ways to split the input: only for inputs this short, at most this many splits,
+        /// their best words, placed after the first few candidates.
+        static let maxSplitLetters = 8
+        static let maxSplits = 4
+        static let wordsPerSplit = 2
+        static let otherSplitsAt = 3
+        /// Common words only (ln of a dictionary weight): 余额 and 西安, not 积案 or 堤岸. A word the
+        /// user has picked gains from learning and can pass.
+        static let minSplitWordScore = Float(log(20000.0))
     }
 
     private let lexicon: PinyinLexicon
@@ -42,6 +51,10 @@ public final class PinyinEngine {
     }
 
     public func candidates(_ input: String, before: SentenceDecoder.Context? = nil, taps: SentenceDecoder.Taps? = nil) -> [Candidate] {
+        withOtherSplits(input, rankedCandidates(input, before: before, taps: taps))
+    }
+
+    private func rankedCandidates(_ input: String, before: SentenceDecoder.Context?, taps: SentenceDecoder.Taps?) -> [Candidate] {
         let words = wordCandidates(input)
         let limit = lexicon.model == nil ? 1 : C.maxSentences
         let sentences = decoder.decode(input, before: before, limit: limit, taps: taps)
@@ -132,6 +145,45 @@ public final class PinyinEngine {
             }
         }
         return reachable[letters.count]
+    }
+
+    /// yue reads as 月 but also as yu e, 余额; xian also as xi an, 西安. A short input that splits
+    /// into whole syllables another way gets that reading's best words a few places down, where
+    /// they are on the first screen without moving what was first.
+    private func withOtherSplits(_ input: String, _ ranked: [Candidate]) -> [Candidate] {
+        let letters = Array(input.utf8)
+        guard letters.count >= 3, letters.count <= C.maxSplitLetters, letters.allSatisfy({ $0 >= 97 && $0 <= 122 }) else { return ranked }
+        let usual = segment(input).map(\.text)
+        var splits: [[String]] = []
+        var path: [String] = []
+        func search(_ position: Int) {
+            if splits.count >= C.maxSplits { return }
+            if position == letters.count {
+                if path.count >= 2 && path != usual { splits.append(path) }
+                return
+            }
+            for end in (position + 1)...min(position + C.maxSyllableLength, letters.count) {
+                let piece = String(decoding: letters[position..<end], as: UTF8.self)
+                if lexicon.isSyllable(piece) {
+                    path.append(piece)
+                    search(end)
+                    path.removeLast()
+                }
+            }
+        }
+        search(0)
+        if splits.isEmpty { return ranked }
+        var seen = Set(ranked.map(\.text))
+        var added: [Candidate] = []
+        for split in splits {
+            for match in lexicon.matches(split.map { LexiconPiece($0, isPrefix: false) }, limit: C.wordsPerSplit)
+            where match.score >= C.minSplitWordScore && seen.insert(match.word.text).inserted {
+                added.append(Candidate(text: match.word.text, consumed: letters.count, syllables: match.word.syllables, parts: nil, spelling: nil, id: match.word.id))
+            }
+        }
+        if added.isEmpty { return ranked }
+        let at = min(C.otherSplitsAt, ranked.count)
+        return Array(ranked[..<at]) + added + Array(ranked[at...])
     }
 
     private func wordCandidates(_ input: String) -> [Candidate] {
