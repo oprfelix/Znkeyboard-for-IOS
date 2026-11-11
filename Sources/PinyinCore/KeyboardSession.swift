@@ -135,6 +135,12 @@ public final class KeyboardSession {
         return candidates.first?.spelling?.replacingOccurrences(of: " ", with: "'") ?? composing
     }
 
+    /// What the bar says over the candidates: a hint, the word being changed, or the sentence whose
+    /// pinyin is edited. Never the pinyin being typed: that shows in the text.
+    public var notice: String {
+        hint != nil || fix != nil || editCaret != nil ? label : ""
+    }
+
     private var parts: [Word] { candidates.first?.parts ?? [] }
 
     /// What the row of candidates lists now.

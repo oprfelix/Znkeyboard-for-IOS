@@ -288,10 +288,8 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
             typing.learner.onCommitted(character, sample)
             let wasComposing = session.composing
             session.type(character, tap: tap, sample: sample)
-            if session.editCaret == nil, session.composing == wasComposing + String(character) {
-                if wasComposing.isEmpty { bar.clearLabel() }
-                bar.appendToLabel(character)
-            }
+            // The first letter puts the bar in place of the tools at once; the candidates follow.
+            if wasComposing.isEmpty, !session.composing.isEmpty { bar.beginComposing() }
         }
         afterKey(session)
     }
@@ -378,7 +376,8 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
             return
         }
         layoutCard()
-        bar.showsLabel = spellingSize == 0
+        let notice = session.isComposing ? session.notice : ""
+        bar.showsLabel = spellingSize == 0 && !notice.isEmpty
         spellingRow.show(session.spellings, selected: session.spellingIndex)
         keys.setComposing(session.isComposing, choosingMark: session.offerSelection != nil)
         let expanded = session.expanded && !session.items.isEmpty
@@ -392,7 +391,7 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
             return
         }
         bar.show(
-            label: session.isComposing ? session.label : "",
+            label: notice,
             items: session.items,
             fixTitle: session.canFix ? (session.isChoosingWord ? "取消" : (session.editCaret == nil ? "改词" : "完成")) : nil,
             expanded: expanded,

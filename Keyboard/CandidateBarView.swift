@@ -192,22 +192,19 @@ final class CandidateBarView: UIView, UIScrollViewDelegate {
         placeItems()
     }
 
-    /// The 9-key keyboard spells in its own row, so the candidates take all of this one.
+    /// The small line over the candidates, only for a hint: the pinyin itself shows in the text.
     var showsLabel = true {
         didSet { labelHeight.isActive = !showsLabel }
     }
     private lazy var labelHeight = label.heightAnchor.constraint(equalToConstant: 0)
 
-    func clearLabel() { label.text = "" }
-
-    /// The letter shows at once; the candidates follow when the engine has them.
-    func appendToLabel(_ character: Character) {
+    /// Typing has begun: the tools give way at once; the candidates follow when the engine has them.
+    func beginComposing() {
         tools.isHidden = true
-        label.isHidden = false
-        label.text = (label.text ?? "") + String(character)
+        label.text = ""
     }
 
-    /// The small pinyin line sits over the candidates' column: a tap there picks the one below.
+    /// The small hint line sits over the candidates' column: a tap there picks the one below.
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
         // Anywhere in the bar's height over the candidates reaches them, so a swipe that starts a
         // little above or below the words still scrolls them.
