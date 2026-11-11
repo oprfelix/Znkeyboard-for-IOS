@@ -3,6 +3,25 @@ import UIKit
 /// Buttons answer at once, yet a drag that starts on one still scrolls.
 class CandidateScroller: UIScrollView {
     override func touchesShouldCancel(in view: UIView) -> Bool { true }
+
+    /// Where a finger came down, and when it left: the row's taps are settled on the first.
+    var onTouchDown: ((CGPoint) -> Void)?
+    var onTouchUp: (() -> Void)?
+
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+        super.touchesBegan(touches, with: event)
+        if let touch = touches.first { onTouchDown?(touch.location(in: self)) }
+    }
+
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
+        super.touchesEnded(touches, with: event)
+        onTouchUp?()
+    }
+
+    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
+        super.touchesCancelled(touches, with: event)
+        onTouchUp?()
+    }
 }
 
 /// An icon that answers past its drawn edge: the bar's full height, and half the gap to each
@@ -60,6 +79,11 @@ final class CandidateBarView: UIView, UIScrollViewDelegate {
         scroller.delegate = self
         scroller.delaysContentTouches = false
         scroller.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(itemTapped)))
+        scroller.onTouchDown = { [weak self] point in self?.pressItem(at: point) }
+        // The tap is handled as the finger lifts; the shading goes a moment later, so it is seen.
+        scroller.onTouchUp = { [weak self] in
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { self?.releaseItem() }
+        }
         fixWidth = fix.widthAnchor.constraint(equalToConstant: 0)
         fixWidth.isActive = true
         fix.titleLabel?.font = .systemFont(ofSize: 15)
@@ -317,9 +341,40 @@ final class CandidateBarView: UIView, UIScrollViewDelegate {
         return UIGraphicsImageRenderer(size: size).image { _ in symbol.draw(in: CGRect(origin: .zero, size: size)) }
             .withRenderingMode(.alwaysTemplate)
     }
+    /// The word under the finger as it came down. Candidates are worked out in the background and
+    /// can change before the finger lifts; the word the user aimed at is the one they saw.
+    private var pressedText: String?
+    private var pressedButton: UIButton?
+
+    private func itemIndex(at x: CGFloat) -> Int? {
+        buttons.prefix(placed).firstIndex { $0.frame.minX <= x && x < $0.frame.maxX + 2 }
+    }
+
+    private func pressItem(at point: CGPoint) {
+        releaseItem()
+        guard let index = itemIndex(at: point.x), index < items.count else { return }
+        pressedText = items[index]
+        let button = buttons[index]
+        if index != selectedItem {
+            button.backgroundColor = KeyboardKeysView.pressedKey.withAlphaComponent(0.55)
+            pressedButton = button
+        }
+    }
+
+    private func releaseItem() {
+        if let button = pressedButton, button.tag != selectedItem { button.backgroundColor = .clear }
+        pressedButton = nil
+    }
+
+    func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
+        pressedText = nil
+        releaseItem()
+    }
+
     @objc private func itemTapped(_ tap: UITapGestureRecognizer) {
-        let x = tap.location(in: scroller).x
-        if let index = buttons.prefix(placed).firstIndex(where: { $0.frame.minX <= x && x < $0.frame.maxX + 2 }) { onTap?(index) }
+        let aimed = pressedText.flatMap { text in items.firstIndex(of: text) }
+        pressedText = nil
+        if let index = aimed ?? itemIndex(at: tap.location(in: scroller).x) { onTap?(index) }
     }
 
     @objc private func fixTapped() { onFix?() }
