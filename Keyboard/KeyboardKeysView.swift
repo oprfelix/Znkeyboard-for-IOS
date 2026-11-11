@@ -59,6 +59,8 @@ final class KeyboardKeysView: UIView {
     private static let rowGap: CGFloat = 11
     private static let hitOverhang: CGFloat = 4
     private static let fastDisplaySeconds: CFTimeInterval = 3
+    /// After typing stops the display is held at 60 Hz for this long before it is let go.
+    private static let steadyDisplaySeconds: CFTimeInterval = 60
     private static let topInset: CGFloat = 4
     private static let bottomInset: CGFloat = 2
     private static let gap: CGFloat = 6
@@ -508,16 +510,34 @@ final class KeyboardKeysView: UIView {
         return dx * dx + dy * dy
     }
 
-    /// ProMotion rests at a low rate on a still screen, and touches and drawing wait for its next
-    /// frame. A running link holds it at full speed while typing, and stops soon after.
+    /// ProMotion rests at as little as 10 Hz on a still screen, and a touch waits for its next
+    /// frame: the first key after a pause came up to a tenth of a second late. A running link
+    /// holds the display at full speed while typing, then at 60 Hz through a pause to think or
+    /// read (a key then waits a frame of 16 ms at most), and lets go only after a long rest.
     private func keepDisplayFast() {
         fastUntil = CACurrentMediaTime() + Self.fastDisplaySeconds
-        displayLink?.isPaused = false
+        guard let link = displayLink else { return }
+        if displayIsSteady {
+            displayIsSteady = false
+            link.preferredFrameRateRange = Self.fastRate
+        }
+        link.isPaused = false
     }
 
     @objc private func displayTick() {
-        if CACurrentMediaTime() > fastUntil { displayLink?.isPaused = true }
+        let now = CACurrentMediaTime()
+        guard now > fastUntil, let link = displayLink else { return }
+        if now > fastUntil + Self.steadyDisplaySeconds {
+            link.isPaused = true
+        } else if !displayIsSteady {
+            displayIsSteady = true
+            link.preferredFrameRateRange = Self.steadyRate
+        }
     }
+
+    private var displayIsSteady = false
+    private static let fastRate = CAFrameRateRange(minimum: 80, maximum: 120, preferred: 120)
+    private static let steadyRate = CAFrameRateRange(minimum: 48, maximum: 60, preferred: 60)
 
     override func didMoveToWindow() {
         super.didMoveToWindow()
@@ -525,7 +545,8 @@ final class KeyboardKeysView: UIView {
         displayLink = nil
         guard window != nil else { return }
         let link = CADisplayLink(target: self, selector: #selector(displayTick))
-        link.preferredFrameRateRange = CAFrameRateRange(minimum: 80, maximum: 120, preferred: 120)
+        displayIsSteady = false
+        link.preferredFrameRateRange = Self.fastRate
         link.add(to: .main, forMode: .common)
         displayLink = link
         keepDisplayFast()
