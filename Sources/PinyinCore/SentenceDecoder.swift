@@ -86,6 +86,8 @@ public final class SentenceDecoder {
         static let lmWeight: Float = 0.6
         static let picksWeight: Float = 0.05
         static let picksScale = 300
+        /// Inputs up to this many letters or digits, a word or short phrase, use [picksScale].
+        static let shortInputLetters = 16
         static let pairsWeight: Float = 0.1
         static let initialCost: Float = 2.5
         static let initialBeforeVowelCost: Float = 9
@@ -142,6 +144,7 @@ public final class SentenceDecoder {
         let model = lexicon.model
         let beam = model == nil ? 1 : C.beam
         let choices = model == nil ? 1 : C.lmChoices
+        let picksScale = Self.picksScale(n)
         var piecesAt = [[Piece]?](repeating: nil, count: n)
         func pieces(_ at: Int) -> [Piece] {
             if let known = piecesAt[at] { return known }
@@ -196,7 +199,7 @@ public final class SentenceDecoder {
                 for edge in edges {
                     if model != nil, best[edge.end].count >= beam, best[edge.end].last!.cost <= step.cost + C.lmWordCost + edge.cost { continue }
                     let word = edge.match.word
-                    let cost = edge.cost + wordCost(edge.match, step.context, step.text)
+                    let cost = edge.cost + wordCost(edge.match, step.context, step.text, picksScale: picksScale)
                     relax(&best[edge.end], Step(step.cost + cost, step, word, edge.pieces, word.id, word.text), beam)
                 }
             }
@@ -219,6 +222,7 @@ public final class SentenceDecoder {
         let model = lexicon.model
         let beam = model == nil ? 1 : C.beam
         let choices = model == nil ? 1 : C.lmChoices
+        let picksScale = Self.picksScale(n)
         var best = [[Step]](repeating: [], count: n + 1)
         let startContext = before.map { $0.id >= 0 && model != nil ? $0.id : (model?.start ?? -1) } ?? (model?.start ?? -1)
         best[0].append(Step(0, nil, nil, [], startContext, before?.text))
@@ -232,7 +236,7 @@ public final class SentenceDecoder {
                         let match = candidate.match
                         let extra = candidate.byInitials ? C.initialCost * Float(match.word.syllables.count) : 0
                         if model != nil, best[end].count >= beam, best[end].last!.cost <= step.cost + C.lmWordCost + extra { continue }
-                        let cost = step.cost + extra + wordCost(match, step.context, step.text)
+                        let cost = step.cost + extra + wordCost(match, step.context, step.text, picksScale: picksScale)
                         relax(&best[end], Step(cost, step, match.word, [], match.word.id, match.word.text), beam)
                     }
                 }
@@ -245,7 +249,13 @@ public final class SentenceDecoder {
         }
     }
 
-    func wordCost(_ match: Match, _ context: Int, _ previous: String?) -> Float {
+    /// How many of the latest picks a word's personal share is taken of, for an input of [letters].
+    /// A word or short phrase takes its share of the last [C.picksScale], so a pick still counts
+    /// after weeks of typing; a long sentence of all of them, so many learned words can't crowd
+    /// the language model out of the segmentation.
+    private static func picksScale(_ letters: Int) -> Int { letters <= C.shortInputLetters ? C.picksScale : .max }
+
+    func wordCost(_ match: Match, _ context: Int, _ previous: String?, picksScale: Int = C.picksScale) -> Float {
         guard let model = lexicon.model else { return C.wordCost - match.score }
         let id = match.word.id
         var logP = id >= 0 ? model.logP(context, id) : match.score - match.learned - lexicon.dictionary.logTotalWeight
@@ -260,7 +270,7 @@ public final class SentenceDecoder {
                 keep -= C.picksWeight
                 // Shares of at most the last few hundred picks: over all of them, a word picked once
                 // after weeks of typing would count for nothing next to the language model.
-                personal += C.picksWeight * min(Float(match.uses) / Float(min(learnedUses, C.picksScale)), 1)
+                personal += C.picksWeight * min(Float(match.uses) / Float(min(learnedUses, picksScale)), 1)
             }
             if pairTotal > 0 {
                 keep -= C.pairsWeight
