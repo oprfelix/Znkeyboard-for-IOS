@@ -40,6 +40,23 @@ public final class LanguageModel {
 
     public func unigram(_ word: Int) -> Float { Float(short(unigramAt + word * 2)) / 1000 }
 
+    /// The words seen after [previous], likeliest first, with ln P(word | previous).
+    public func followers(_ previous: Int, limit: Int) -> [(word: Int, logP: Float)] {
+        if previous < 0 || previous >= words || limit <= 0 { return [] }
+        let low = Int(int(offsetsAt + previous * 4))
+        let high = Int(int(offsetsAt + (previous + 1) * 4))
+        if high <= low { return [] }
+        var found: [(word: Int, logP: Float)] = []
+        found.reserveCapacity(high - low)
+        for at in low..<high {
+            let pair = UInt32(bitPattern: int(pairsAt + at * 4))
+            let id = Int(pair >> 14)
+            if id < words { found.append((id, -Float(pair & 0x3FFF) / 400)) }
+        }
+        found.sort { $0.logP > $1.logP }
+        return Array(found.prefix(limit))
+    }
+
     /// ln P([word] | [previous]).
     public func logP(_ previous: Int, _ word: Int) -> Float {
         if previous < 0 { return unigram(word) }

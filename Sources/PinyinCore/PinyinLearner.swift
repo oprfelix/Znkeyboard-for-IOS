@@ -145,6 +145,8 @@ public final class PinyinLearner {
 
     private static let maxPhraseSyllables = 6
     private static let learnedPredictions = 4
+    private static let continuationsFirst = 4
+    private static let modelPredictions = 6
     public private(set) var data: PinyinUserData
     private let lexicon: PinyinLexicon
     public var learningEnabled = true
@@ -217,9 +219,16 @@ public final class PinyinLearner {
         for next in data.nextWords(context, limit: Self.learnedPredictions) where seen.insert(next).inserted {
             result.append(Prediction(text: next, word: nil))
         }
-        for (suffix, word) in lexicon.continuations(context, limit: limit) where result.count < limit && seen.insert(suffix).inserted {
-            result.append(Prediction(text: suffix, word: word))
+        // Then words that continue it (怎么 → 样, 办), a few words likely to follow it (发货 →
+        // 时间, 速度), and the rest of the continuations.
+        let continuations = lexicon.continuations(context, limit: limit)
+        let following = lexicon.nextWords(after: context, id: previousId, limit: Self.modelPredictions)
+        func add(_ prediction: Prediction) {
+            if result.count < limit && seen.insert(prediction.text).inserted { result.append(prediction) }
         }
+        for (suffix, word) in continuations.prefix(Self.continuationsFirst) { add(Prediction(text: suffix, word: word)) }
+        for word in following { add(Prediction(text: word.text, word: nil)) }
+        for (suffix, word) in continuations.dropFirst(Self.continuationsFirst) { add(Prediction(text: suffix, word: word)) }
         return result
     }
 

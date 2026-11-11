@@ -135,7 +135,13 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
         keys.onChooseLayout = { [weak self] nine in self?.chooseLayout(nine) }
         typing.load()
         keys.onGlobe = { [weak self] view, event in self?.handleInputModeList(from: view, with: event) }
-        bar.onTap = { [weak self] index in self?.session?.tapItem(index) }
+        // A pick changes the field like a key does: noted, so the change is not taken for the
+        // app's own and the 联想 that follow it are kept.
+        bar.onTap = { [weak self] index in
+            guard let self, let session else { return }
+            session.tapItem(index)
+            if !session.isComposing { expectedBefore = textDocumentProxy.documentContextBeforeInput }
+        }
         bar.onFix = { [weak self] in self?.session?.tapFix() }
         loadEngine()
         render()

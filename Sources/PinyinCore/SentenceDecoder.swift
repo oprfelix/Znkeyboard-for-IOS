@@ -72,7 +72,7 @@ public final class SentenceDecoder {
         static let maxInput = 60
         static let maxCache = 3000
         static let fuzzyChoices = 16
-        static let fuzzyCost: Float = 2.5
+        static let fuzzyCost: Float = 4.5
         static let maxSyllableLength = 6
         static let maxWordSyllables = 6
         static let maxNineKeyWordDigits = 24
@@ -298,7 +298,7 @@ public final class SentenceDecoder {
         let found = lexicon.matches(run.map { LexiconPiece($0.text, isPrefix: $0.isPrefix) }, limit: max(C.fuzzyChoices, limit))
         let costed: [(Match, Float, Int)] = found.enumerated().map { order, match in
             var fuzzy = 0
-            for i in run.indices where !run[i].isPrefix {
+            for i in run.indices where !run[i].isPrefix || lexicon.rawSyllables.contains(run[i].text) {
                 if i >= match.word.syllables.count || match.word.syllables[i] != run[i].text { fuzzy += 1 }
             }
             return (match, C.fuzzyCost * Float(fuzzy), order)

@@ -76,6 +76,7 @@ public final class PinyinLexicon {
     private let normalizedIndex: [String: Int]
     private let syllableIndex: [String: Int]
     private var fitCache: [String: [Bool]] = [:]
+    private var exactCache: [String: [Bool]] = [:]
     private var nineKeyWordCache: [String: [(match: Match, byInitials: Bool)]] = [:]
     private var nineKeyVersion = -1
 
@@ -208,6 +209,49 @@ public final class PinyinLexicon {
         return SentenceDecoder.Context(text: single, id: dictionary.wordId(at: row))
     }
 
+    /// The language model's id of [text] when it is one word of the dictionary, else -1.
+    public func modelId(_ text: String) -> Int {
+        if model == nil || text.isEmpty { return -1 }
+        for row in dictionary.rows(textPrefix: text) {
+            guard dictionary.text(at: row) == text else { break }
+            let id = dictionary.wordId(at: row)
+            if id >= 0 { return id }
+        }
+        return -1
+    }
+
+    /// Each word id's most used row, to read a word the model predicts.
+    private lazy var rowByWordId: [Int32] = {
+        var rows = [Int32](repeating: -1, count: dictionary.words)
+        for row in 0..<dictionary.rows {
+            let id = dictionary.wordId(at: row)
+            guard id >= 0, id < rows.count else { continue }
+            if rows[id] < 0 || dictionary.score(at: row) > dictionary.score(at: Int(rows[id])) { rows[id] = Int32(row) }
+        }
+        return rows
+    }()
+
+    /// Words likely to come next after the word [id] (or [text]), from the language model: 发货 →
+    /// 时间, 好的 → 朋友. Only words of two or more Chinese characters in common use: the model was
+    /// learned from the web, and its single characters and rare words (多少 → 马赫) are noise.
+    public func nextWords(after text: String, id: Int, limit: Int) -> [Word] {
+        guard let model else { return [] }
+        let previous = id >= 0 ? id : modelId(text)
+        if previous < 0 { return [] }
+        var result: [Word] = []
+        var seen = Set<String>()
+        for (next, logP) in model.followers(previous, limit: limit * 4) {
+            if logP < Self.minNextWordLogP { break }
+            let row = rowByWordId[next]
+            if row < 0 || model.unigram(next) < Self.minNextWordUnigram { continue }
+            let found = dictionary.text(at: Int(row))
+            guard found.count >= 2, found.unicodeScalars.allSatisfy({ (0x4E00...0x9FFF).contains($0.value) }), seen.insert(found).inserted else { continue }
+            result.append(Word(text: found, syllables: dictionary.syllables(at: Int(row)), id: next, trade: dictionary.isTrade(at: Int(row))))
+            if result.count >= limit { break }
+        }
+        return result
+    }
+
     /// Words that continue [text], best first, as (what is left to type, the word).
     public func continuations(_ text: String, limit: Int) -> [(String, Word)] {
         if text.isEmpty { return [] }
@@ -258,9 +302,22 @@ public final class PinyinLexicon {
         return fits
     }
 
+    /// Which syllables are spelled as [piece] was typed, not only alike under a fuzzy rule.
+    private func syllablesAsTyped(_ piece: LexiconPiece) -> [Bool] {
+        let key = piece.isPrefix ? piece.text + "*" : piece.text
+        if let known = exactCache[key] { return known }
+        // A whole syllable typed last is still a prefix (xin may grow into xing), but xin itself
+        // is what was typed: xing words come after it.
+        let whole = !piece.isPrefix || rawSyllables.contains(piece.text)
+        let exact: [Bool] = rawNames.map { whole ? $0 == piece.text : $0.hasPrefix(piece.text) }
+        exactCache[key] = exact
+        return exact
+    }
+
     private func matchHits(_ pieces: [LexiconPiece], limit: Int) -> [Match] {
         let wanted = pieces.map { normalizedIndex[fuzzy.normalize($0.text)] ?? -1 }
         let fits = pieces.map(syllablesFitting)
+        let asTyped = fuzzy.isEmpty ? [] : pieces.map(syllablesAsTyped)
         var found: [Int] = []
         for key in initialsKeys(pieces) {
             for row in dictionary.rows(initials: key) {
@@ -275,7 +332,26 @@ public final class PinyinLexicon {
             let ids = built[index].raw.map { syllableIndex[$0] ?? 0 }
             if pieces.indices.allSatisfy({ fits[$0][ids[$0]] }) { found.append(-1 - index) }
         }
-        found.sort(by: isBetter)
+        if asTyped.isEmpty {
+            found.sort(by: isBetter)
+        } else {
+            // What was typed comes first: a word read only through a fuzzy rule (li for ni) counts
+            // as much less used, so it follows the words spelled as typed unless far more common.
+            func ids(_ hit: Int) -> [Int] {
+                hit >= 0 ? dictionary.syllableIds(at: hit).map(Int.init) : built[-1 - hit].raw.map { syllableIndex[$0] ?? 0 }
+            }
+            func value(_ hit: Int) -> Float {
+                let syllables = ids(hit)
+                var fuzzyCount = 0
+                for i in pieces.indices where i < syllables.count && !asTyped[i][syllables[i]] { fuzzyCount += 1 }
+                return (hit >= 0 ? score(hit) : built[-1 - hit].score) - Self.fuzzyPenalty * Float(fuzzyCount)
+            }
+            let values = Dictionary(found.map { ($0, value($0)) }, uniquingKeysWith: { a, _ in a })
+            found.sort { a, b in
+                let x = values[a]!, y = values[b]!
+                return x != y ? x > y : isBetter(a, b)
+            }
+        }
         if pieces.contains(where: \.isPrefix) {
             let last = pieces.count - 1
             func exactLast(_ hit: Int) -> Bool {
@@ -491,6 +567,11 @@ public final class PinyinLexicon {
     private static let singleLimit = 40
     private static let maxCodeLength = 6
 
+    /// How much less a word read only through a fuzzy rule counts, per syllable (ln 200).
+    static let fuzzyPenalty = Float(log(200.0))
+    /// A predicted next word under this is a guess no better than chance (ln 1/400).
+    private static let minNextWordLogP = Float(log(1.0 / 400))
+    private static let minNextWordUnigram: Float = -11
     private static let learnBonus: Float = 4
     private static let maxContextWord = 6
     private static let newWordBase: Float = log(20000)
