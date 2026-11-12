@@ -311,7 +311,7 @@ struct TranslatePage: View {
             .buttonStyle(.plain)
         } else if !store.aiConfigured {
             Button { path = [.ai, .apiKey] } label: {
-                notice("还没配置 API Key", "翻译和润色要连接 AI 服务", action: "去配置")
+                notice("还没配置 API Key", "翻译要连接 AI 服务", action: "去配置")
             }
             .buttonStyle(.plain)
         } else {
@@ -933,7 +933,7 @@ struct OnboardingView: View {
     @ViewBuilder
     private var accessStep: some View {
         step(2, "打开完全访问", done: store.fullAccess, current: current == .access,
-             detail: "在同一页打开「允许完全访问」，系统会弹出一段提示，点「允许」。润色和翻译需要联网；普通打字不需要，也不会上传你输入的内容。")
+             detail: "在同一页打开「允许完全访问」，系统会弹出一段提示，点「允许」。翻译需要联网；普通打字不需要，也不会上传你输入的内容。")
         if current == .access {
             Button("去设置打开") { openSettings() }
                 .font(.body.weight(.semibold))
@@ -942,7 +942,7 @@ struct OnboardingView: View {
                     .font(.footnote).foregroundStyle(.secondary)
                 TryField(text: $text, placeholder: "点这里，切到 ZnKeyboard", focus: focusTry)
                 if stillWaiting {
-                    Text("还没打勾？看看「允许完全访问」是不是打开了，以及现在用的是不是 ZnKeyboard（键盘上方有「润色」按钮）。")
+                    Text("还没打勾？看看「允许完全访问」是不是打开了，以及现在用的是不是 ZnKeyboard（键盘上方有「翻译为」按钮）。")
                         .font(.footnote).foregroundStyle(.orange)
                 }
             }

@@ -72,6 +72,8 @@ public final class KeyboardSession {
 
     private var lastSpace: Date?
     private var fix: Fix?
+    /// The word a held space points at while choosing which word to change.
+    private var pointedPart: Int?
     private var fixedSentence: PinyinEngine.Candidate?
     private var fieldContext: SentenceDecoder.Context?
     private var englishRun = false
@@ -129,6 +131,7 @@ public final class KeyboardSession {
         if nineKey, language == .chinese { return "" }
         if editCaret != nil { return candidates.first?.text ?? "" }
         if let fix {
+            if pointedItem != nil { return "左右滑动选词，松手修改" }
             guard fix.part >= 0, let part = parts[safe: fix.part] else { return "点要改的词" }
             return "把「\(part.text)」换成"
         }
@@ -149,6 +152,9 @@ public final class KeyboardSession {
         if let fix { return fix.part < 0 ? parts.map(\.text) : fix.options.map(\.text) }
         return composing.isEmpty ? predictions.map(\.text) : candidates.map(\.text)
     }
+
+    /// The word a held space points at, highlighted in the row of the sentence's words.
+    public var pointedItem: Int? { fix?.part == -1 ? pointedPart : nil }
 
     /// The 改词 button: shown for a sentence of two or more words, or to leave choosing.
     public var canFix: Bool { !nineKey && (fix != nil || (parts.count >= 2 && editCaret == nil)) }
@@ -503,6 +509,33 @@ public final class KeyboardSession {
             fix = nil
         }
         changed()
+    }
+
+    /// Space held over a sentence: its words are listed, the last (where typing is) pointed at.
+    /// False when there is no sentence of two or more words to point into.
+    public func beginPointing() -> Bool {
+        settle()
+        guard !nineKey, isComposing, fix == nil, editCaret == nil, parts.count >= 2 else { return false }
+        fix = Fix(part: -1, options: [])
+        pointedPart = parts.count - 1
+        expanded = false
+        changed()
+        return true
+    }
+
+    public func movePointer(_ steps: Int) {
+        guard let at = pointedItem else { return }
+        let next = min(max(at + steps, 0), parts.count - 1)
+        guard next != at else { return }
+        pointedPart = next
+        changed()
+    }
+
+    /// The finger lifted: the pointed word's replacements are listed, as a tap on it would.
+    public func endPointing() {
+        guard let at = pointedItem, let current = fix else { return }
+        pointedPart = nil
+        pickFix(current, at)
     }
 
     public func editPinyin() {

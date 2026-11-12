@@ -116,7 +116,6 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
         card.clipsToBounds = true
         card.onClose = { [weak self] in self?.closeCard() }
         card.onAction = { [weak self] in self?.cardAction() }
-        bar.onPolish = { [weak self] in self?.rewrite(translating: false) }
         bar.onTranslate = { [weak self] in self?.rewrite(translating: true) }
         bar.onOffer = { [weak self] in self?.readCopied() }
         bar.onDismissOffer = { [weak self] in
@@ -132,6 +131,9 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
         keys.onLetter = { [weak self] text, tap, sample in self?.typed(text, tap, sample) }
         keys.typing = typing
         keys.onMoveCaret = { [weak self] steps in self?.moveCaret(steps) }
+        keys.onBeginPointing = { [weak self] in self?.session?.beginPointing() ?? false }
+        keys.onMovePointer = { [weak self] steps in self?.session?.movePointer(steps) }
+        keys.onEndPointing = { [weak self] in self?.session?.endPointing() }
         keys.onChooseLayout = { [weak self] nine in self?.chooseLayout(nine) }
         typing.load()
         keys.onGlobe = { [weak self] view, event in self?.handleInputModeList(from: view, with: event) }
@@ -439,7 +441,7 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
             items: session.items,
             fixTitle: session.canFix ? (session.isChoosingWord ? "取消" : (session.editCaret == nil ? "改词" : "完成")) : nil,
             expanded: expanded,
-            selected: session.offerSelection
+            selected: session.pointedItem ?? session.offerSelection
         )
     }
 
@@ -532,7 +534,7 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
             afterConsent = retry
             card.showResult(
                 title: "发送前请确认",
-                body: "润色和翻译会把你选中的文字发给 \(SharedSettings.aiRecipientName)，由它按自己的隐私政策处理。文字不经过 ZnKeyboard 的服务器。同意后，用这个服务时不再询问。",
+                body: "翻译会把你选中的文字发给 \(SharedSettings.aiRecipientName)，由它按自己的隐私政策处理。文字不经过 ZnKeyboard 的服务器。同意后，用这个服务时不再询问。",
                 actionTitle: "同意"
             )
             showCard()

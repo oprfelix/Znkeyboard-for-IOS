@@ -18,8 +18,6 @@ final class SavedTextPanelView: UIView {
     private static let help: [(symbol: String, title: String, body: String)] = [
         ("doc.on.doc", "翻译复制的外文",
          "在聊天里长按对方的外文消息，点「拷贝」，回到输入框，点蓝色的「翻译刚复制的外文」。译文只给你看，不会打进输入框。按钮关掉了，也可以点下面的按钮翻译。"),
-        ("wand.and.stars", "润色",
-         "打好中文，或选中一段文字，点「润色」。看过结果点「替换」，就会换掉原来的文字。"),
         ("translate", "翻译",
          "打好中文，点「翻译为…」，看过译文点「替换」。要翻译成哪种语言，在 ZnKeyboard App 的「翻译」页选。"),
     ]

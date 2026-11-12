@@ -39,13 +39,12 @@ final class CandidateBarView: UIView, UIScrollViewDelegate {
     var onTap: ((Int) -> Void)?
     var onFix: (() -> Void)?
     var onExpand: (() -> Void)?
-    var onPolish: (() -> Void)?
     var onTranslate: (() -> Void)?
     var onOffer: (() -> Void)?
     var onDismissOffer: (() -> Void)?
     var onClipboard: (() -> Void)?
     var onPhrases: (() -> Void)?
-    /// How polish, translate and reading what was copied work.
+    /// How translate and reading what was copied work.
     var onHelp: (() -> Void)?
 
     private let label = UILabel()
@@ -62,7 +61,6 @@ final class CandidateBarView: UIView, UIScrollViewDelegate {
     private var rowEnd: CGFloat = 0
     private var placedSize = CGSize.zero
     private let tools = UIStackView()
-    private let polish = UIButton(type: .system)
     private let translate = UIButton(type: .system)
     private let offer = UIButton(type: .system)
     private let offerClose = UIButton(type: .system)
@@ -96,12 +94,9 @@ final class CandidateBarView: UIView, UIScrollViewDelegate {
             item.translatesAutoresizingMaskIntoConstraints = false
             addSubview(item)
         }
-        for (button, title, symbol) in [(polish, "润色", "wand.and.stars"), (translate, "翻译", "translate")] {
-            button.setTitle(title, for: .normal)
-            styleTool(button)
-            styleAI(button, symbol: symbol)
-        }
-        polish.addTarget(self, action: #selector(polishTapped), for: .touchUpInside)
+        translate.setTitle("翻译", for: .normal)
+        styleTool(translate)
+        styleAI(translate, symbol: "translate")
         translate.addTarget(self, action: #selector(translateTapped), for: .touchUpInside)
         styleTool(offer)
         // Copied text waits for an answer, so this is the one solid button.
@@ -138,7 +133,7 @@ final class CandidateBarView: UIView, UIScrollViewDelegate {
         // A long language name gives way before the icons do.
         translate.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         translate.titleLabel?.lineBreakMode = .byTruncatingTail
-        for item in [polish, translate, offer, offerClose, spacer, clipboardButton, phrasesButton, helpButton] as [UIView] { tools.addArrangedSubview(item) }
+        for item in [translate, offer, offerClose, spacer, clipboardButton, phrasesButton, helpButton] as [UIView] { tools.addArrangedSubview(item) }
         addSubview(tools)
         NSLayoutConstraint.activate([
             tools.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
@@ -146,7 +141,6 @@ final class CandidateBarView: UIView, UIScrollViewDelegate {
             // The whole bar's height, so the icons' wider hit areas are inside the stack too.
             tools.topAnchor.constraint(equalTo: topAnchor),
             tools.bottomAnchor.constraint(equalTo: bottomAnchor),
-            polish.heightAnchor.constraint(equalToConstant: 34),
             translate.heightAnchor.constraint(equalToConstant: 34),
             offer.heightAnchor.constraint(equalToConstant: 34),
             offerClose.heightAnchor.constraint(equalToConstant: 34),
@@ -250,7 +244,8 @@ final class CandidateBarView: UIView, UIScrollViewDelegate {
             let font = placed == 0 ? Self.firstFont : Self.itemFont
             if button.title(for: .normal) != text { button.setTitle(text, for: .normal) }
             if button.titleLabel?.font !== font { button.titleLabel?.font = font }
-            let width = ceil((text as NSString).size(withAttributes: [.font: font]).width) + Self.itemPadding
+            // At least a finger wide: a single character is no smaller a target than a key.
+            let width = max(ceil((text as NSString).size(withAttributes: [.font: font]).width) + Self.itemPadding, Self.minItemWidth)
             let selected = placed == selectedItem
             let inset = selected ? Self.selectedInset : 0
             button.frame = CGRect(x: rowEnd, y: inset, width: width, height: placedSize.height - 2 * inset)
@@ -293,7 +288,6 @@ final class CandidateBarView: UIView, UIScrollViewDelegate {
         setExpand(hidden: true, up: false)
         tools.isHidden = false
         translate.setTitle("翻译为\(languageName)", for: .normal)
-        polish.isHidden = offering
         translate.isHidden = offering
         offer.isHidden = !offering
         offerClose.isHidden = !offering
@@ -318,7 +312,6 @@ final class CandidateBarView: UIView, UIScrollViewDelegate {
         button.titleEdgeInsets = UIEdgeInsets(top: 0, left: 4, bottom: 0, right: -4)
     }
 
-    @objc private func polishTapped() { onPolish?() }
     @objc private func translateTapped() { onTranslate?() }
     @objc private func offerTapped() { onOffer?() }
     @objc private func offerCloseTapped() { onDismissOffer?() }
@@ -380,7 +373,8 @@ final class CandidateBarView: UIView, UIScrollViewDelegate {
     private static let maxShown = 40
     private static let selectedInset: CGFloat = 7
     private static let screensAhead: CGFloat = 2
-    private static let itemPadding: CGFloat = 20
+    private static let itemPadding: CGFloat = 24
+    private static let minItemWidth: CGFloat = 52
     private static let itemFont = UIFont.systemFont(ofSize: 20)
     private static let firstFont = UIFont.systemFont(ofSize: 20, weight: .semibold)
 }

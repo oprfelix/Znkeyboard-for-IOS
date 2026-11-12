@@ -70,6 +70,8 @@ final class KeyboardKeysView: UIView {
     private static let layoutHold: TimeInterval = 0.45
     private static let deleteLineSlide: CGFloat = 30
     private static let caretStep: CGFloat = 9
+    /// A word per this much sliding: words are fewer than characters, and each is a step to feel.
+    private static let wordStep: CGFloat = 28
     private static let caretDim: CGFloat = 0.4
     private static let gridMarks = ["，。？！、：；…～“”—", "（）《》【】@#¥%&*", "+-=/\\|_<>[]{", "}^$€£.,?!:;'"]
     private static let gridSideMargin: CGFloat = 8
@@ -105,6 +107,11 @@ final class KeyboardKeysView: UIView {
     }
     /// Moves the caret by this many characters, for a held space bar.
     var onMoveCaret: ((Int) -> Void)?
+    /// Space held while a sentence is being typed points at its words: begin (true if there are
+    /// words to point at), steps left or right, and the finger lifting on the one to change.
+    var onBeginPointing: (() -> Bool)?
+    var onMovePointer: ((Int) -> Void)?
+    var onEndPointing: (() -> Void)?
     /// A layout chosen by holding the language key: true for 9 keys.
     var onChooseLayout: ((Bool) -> Void)?
     /// A letter typed: its text, how the touch fitted each key, and the learner's record of it.
@@ -147,6 +154,7 @@ final class KeyboardKeysView: UIView {
     private let layoutMenu = UIStackView()
     private var layoutChoice: Bool?
     private var movingCaret = false
+    private var pointingWords = false
     private var caretX: CGFloat = 0
 
     override init(frame: CGRect) {
@@ -491,11 +499,9 @@ final class KeyboardKeysView: UIView {
         let x = Float(point.x), y = Float(point.y)
         let tap = typing.decoder.letterCosts(x: x, y: y, keys: geometry)
         guard typing.adaptiveEnabled else { return (cell, tap, nil) }
-        // On the key itself, even at its edge, it is that key, as on the system keyboard; only a
-        // touch between keys is weighed against its neighbours.
-        if cell.frame.contains(point) {
-            return (cell, tap, TypingLearner.Sample(letter: geometric, x: x, y: y, keys: geometry))
-        }
+        // Near a key's centre it is that key (the decoder's anchor); towards its edge or between
+        // keys, where a broad fingertip lands as often as not, the key is weighed against its
+        // neighbours with where this hand tends to land and what the letters before suggest.
         let letter = typing.decoder.decode(x: x, y: y, geometricLetter: geometric, keys: geometry, previous2: typing.learner.previous2, previous1: typing.learner.previous1, useLanguageModel: true)
         return (letterCells[letter] ?? cell, tap, TypingLearner.Sample(letter: letter, x: x, y: y, keys: geometry))
     }
@@ -555,10 +561,21 @@ final class KeyboardKeysView: UIView {
     private func beginSpace(_ touch: UITouch) {
         spaceTouch = touch
         spaceTimer?.invalidate()
-        guard !composing, !choosingMark else { return }
+        guard !choosingMark else { return }
         spaceTimer = Timer.scheduledTimer(withTimeInterval: Self.caretHold, repeats: false) { [weak self] _ in
-            self?.beginMovingCaret(touch)
+            guard let self else { return }
+            if self.composing { self.beginPointing(touch) } else { self.beginMovingCaret(touch) }
         }
+    }
+
+    /// While composing, a held space walks over the sentence's words instead of the caret.
+    private func beginPointing(_ touch: UITouch) {
+        guard spaceTouch === touch, onBeginPointing?() == true else { return }
+        pointingWords = true
+        caretX = touch.location(in: self).x
+        haptics?.impactOccurred()
+        haptics?.prepare()
+        cells.forEach { if !$0.isSpace { $0.alpha = Self.caretDim } }
     }
 
     private func beginMovingCaret(_ touch: UITouch) {
@@ -574,6 +591,12 @@ final class KeyboardKeysView: UIView {
         spaceTimer?.invalidate()
         spaceTimer = nil
         spaceTouch = nil
+        if pointingWords {
+            pointingWords = false
+            cells.forEach { $0.alpha = 1 }
+            onEndPointing?()
+            return
+        }
         guard movingCaret else { return }
         movingCaret = false
         cells.forEach { $0.alpha = 1 }
@@ -581,7 +604,7 @@ final class KeyboardKeysView: UIView {
 
     /// A key pressed while space is still down: the space came first, so it goes in first.
     private func flushSpace() {
-        guard let touch = spaceTouch, !movingCaret, let at = presses.firstIndex(where: { $0.touch === touch }) else { return }
+        guard let touch = spaceTouch, !movingCaret, !pointingWords, let at = presses.firstIndex(where: { $0.touch === touch }) else { return }
         let press = presses.remove(at: at)
         endSpace()
         setPressed(press.cell, false)
@@ -685,6 +708,14 @@ final class KeyboardKeysView: UIView {
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
         if let touch = deleteTouch, touches.contains(touch) { moveDelete(touch) }
         if let touch = layoutTouch, touches.contains(touch) { moveLayoutChoice(touch) }
+        if pointingWords, let touch = spaceTouch, touches.contains(touch) {
+            let steps = Int((touch.location(in: self).x - caretX) / Self.wordStep)
+            guard steps != 0 else { return }
+            caretX += CGFloat(steps) * Self.wordStep
+            haptics?.impactOccurred(intensity: 0.5)
+            onMovePointer?(steps)
+            return
+        }
         guard movingCaret, let touch = spaceTouch, touches.contains(touch) else { return }
         let steps = Int((touch.location(in: self).x - caretX) / Self.caretStep)
         guard steps != 0 else { return }
@@ -758,7 +789,7 @@ final class KeyboardKeysView: UIView {
         let cell = press.cell
         setPressed(cell, false)
         if cell.isSpace, press.touch === spaceTouch {
-            let moved = movingCaret
+            let moved = movingCaret || pointingWords
             endSpace()
             if !moved { type(cell, nil, nil) }
             return

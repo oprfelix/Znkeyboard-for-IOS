@@ -93,9 +93,9 @@ public enum SharedSettings {
         set { defaults.set(newValue, forKey: "doubleSpacePeriod") }
     }
 
-    /// AI 整句排序 (experimental): the character model reorders whole-input readings. Off by default.
+    /// AI 整句排序 (experimental): the character model reorders whole-input readings. On by default.
     public static var aiRerank: Bool {
-        get { flag("aiRerank", default: false) }
+        get { flag("aiRerank", default: true) }
         set {
             defaults.set(newValue, forKey: "aiRerank")
             defaults.removeObject(forKey: "aiRerankCalls")
