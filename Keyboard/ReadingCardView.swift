@@ -10,6 +10,8 @@ final class ReadingCardView: UIView {
     private let body = UITextView()
     private let action = UIButton(type: .system)
     private let loading = UIActivityIndicatorView(style: .medium)
+    /// For translate: dots run along an arrow while waiting, in place of the spinner.
+    private let flow = FlowArrowView()
     private var bodyHeight: NSLayoutConstraint!
     private static let topInset: CGFloat = 8
     private static let headerHeight: CGFloat = 30
@@ -34,7 +36,7 @@ final class ReadingCardView: UIView {
         action.layer.cornerRadius = 10
         action.contentEdgeInsets = UIEdgeInsets(top: 0, left: 14, bottom: 0, right: 14)
         action.addTarget(self, action: #selector(actionTapped), for: .touchUpInside)
-        for item in [title, close, body, action, loading] as [UIView] {
+        for item in [title, close, body, action, loading, flow] as [UIView] {
             item.translatesAutoresizingMaskIntoConstraints = false
             addSubview(item)
         }
@@ -51,6 +53,8 @@ final class ReadingCardView: UIView {
             close.widthAnchor.constraint(equalToConstant: 36),
             loading.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Self.sideInset),
             loading.topAnchor.constraint(equalTo: action.bottomAnchor, constant: 8),
+            flow.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Self.sideInset),
+            flow.centerYAnchor.constraint(equalTo: body.centerYAnchor),
             body.topAnchor.constraint(equalTo: action.bottomAnchor, constant: 8),
             body.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Self.sideInset),
             body.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Self.sideInset),
@@ -65,11 +69,11 @@ final class ReadingCardView: UIView {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("no storyboards") }
 
-    func showWorking(title text: String) {
+    func showWorking(title text: String, flows: Bool = false) {
         title.text = text
         body.text = ""
         action.isHidden = true
-        loading.startAnimating()
+        if flows { flow.start() } else { loading.startAnimating() }
         bodyHeight.constant = 24
     }
 
@@ -78,6 +82,7 @@ final class ReadingCardView: UIView {
         title.text = text
         body.text = value
         loading.stopAnimating()
+        flow.stop()
         action.setTitle(actionTitle, for: .normal)
         action.isHidden = actionTitle == nil
         let width = max(bounds.width, UIScreen.main.bounds.width) - 2 * Self.sideInset
@@ -87,4 +92,69 @@ final class ReadingCardView: UIView {
 
     @objc private func closeTapped() { onClose?() }
     @objc private func actionTapped() { onAction?() }
+}
+
+/// Three dots that light up left to right, then an arrowhead: 翻译 on its way. With Reduce
+/// Motion the arrow just stays lit.
+final class FlowArrowView: UIView {
+    private var dots: [UIView] = []
+    private let head = UIImageView(image: UIImage(systemName: "chevron.right", withConfiguration: UIImage.SymbolConfiguration(pointSize: 13, weight: .bold)))
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        isHidden = true
+        isAccessibilityElement = true
+        accessibilityLabel = "正在翻译"
+        let stack = UIStackView()
+        stack.axis = .horizontal
+        stack.spacing = 5
+        stack.alignment = .center
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        for _ in 0..<3 {
+            let dot = UIView()
+            dot.backgroundColor = .systemBlue
+            dot.layer.cornerRadius = 3
+            dot.widthAnchor.constraint(equalToConstant: 6).isActive = true
+            dot.heightAnchor.constraint(equalToConstant: 6).isActive = true
+            dots.append(dot)
+            stack.addArrangedSubview(dot)
+        }
+        head.tintColor = .systemBlue
+        stack.addArrangedSubview(head)
+        addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor),
+            stack.topAnchor.constraint(equalTo: topAnchor),
+            stack.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("no storyboards") }
+
+    func start() {
+        isHidden = false
+        let parts = dots + [head as UIView]
+        guard !UIAccessibility.isReduceMotionEnabled else {
+            parts.forEach { $0.alpha = 1 }
+            return
+        }
+        let cycle = 1.2
+        for (index, part) in parts.enumerated() {
+            part.layer.removeAllAnimations()
+            let pulse = CAKeyframeAnimation(keyPath: "opacity")
+            pulse.values = [0.2, 1, 0.2, 0.2]
+            let start = Double(index) * 0.18 / cycle
+            pulse.keyTimes = [0, NSNumber(value: start + 0.15), NSNumber(value: start + 0.35), 1]
+            pulse.duration = cycle
+            pulse.repeatCount = .infinity
+            part.layer.add(pulse, forKey: "flow")
+        }
+    }
+
+    func stop() {
+        isHidden = true
+        (dots + [head as UIView]).forEach { $0.layer.removeAllAnimations() }
+    }
 }

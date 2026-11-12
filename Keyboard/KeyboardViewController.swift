@@ -349,6 +349,19 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
             typing.learner.onContextChanged(expectedBefore)
             session.fieldChanged()
         }
+        refreshTools()
+    }
+
+    override func selectionDidChange(_ textInput: UITextInput?) {
+        super.selectionDidChange(textInput)
+        refreshTools()
+    }
+
+    /// 翻译 greys out in an empty field and says 翻译选中 over a selection; only the tools change,
+    /// so candidates on the bar are left alone.
+    private func refreshTools() {
+        guard let session, !session.isComposing, session.items.isEmpty else { return }
+        render()
     }
 
     private func typed(_ text: String, _ tap: [Float]?, _ sample: TypingLearner.Sample?) {
@@ -461,8 +474,12 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
         grid.isHidden = !expanded || covered
         keys.isHidden = expanded || covered
         if !session.isComposing, session.items.isEmpty {
+            let proxy = textDocumentProxy
+            let selected = !(proxy.selectedText ?? "").isEmpty
+            let field = (proxy.documentContextBeforeInput ?? "") + (proxy.documentContextAfterInput ?? "")
             bar.showTools(languageName: SharedSettings.translateLanguage.chineseName, offering: hasNewCopy, saved: savedTab,
-                          choosingLanguage: choosingLanguage)
+                          choosingLanguage: choosingLanguage,
+                          hasText: selected || !field.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, selection: selected)
             return
         }
         bar.show(
@@ -671,16 +688,18 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
         }
         let language = SharedSettings.translateLanguage
         replacement = (text, selected.isEmpty ? text.count : 0)
-        run(title: translating ? "翻译为 \(language.chineseName)" : "润色", keepsResult: true) { [client] in
+        run(title: translating ? "翻译 → \(language.chineseName)" : "润色", keepsResult: true, flows: translating) { [client] in
             translating ? try await client.translate(text, to: language, with: SharedSettings.provider)
                 : try await client.polish(text, with: SharedSettings.provider)
         }
     }
 
     /// [done] runs once a result has come back.
-    private func run(title: String, keepsResult: Bool, tip: String? = nil, done: (() -> Void)? = nil, _ work: @escaping () async throws -> String) {
+    /// [flows]: the title's arrow moves while waiting and becomes ✓ with the result.
+    private func run(title: String, keepsResult: Bool, tip: String? = nil, flows: Bool = false, done: (() -> Void)? = nil,
+                     _ work: @escaping () async throws -> String) {
         request?.cancel()
-        card.showWorking(title: title)
+        card.showWorking(title: title, flows: flows)
         showCard()
         request = Task { @MainActor [weak self] in
             do {
@@ -688,7 +707,7 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
                 guard let self, !Task.isCancelled else { return }
                 if keepsResult { self.replacement?.text = result }
                 let body = tip.map { result + "\n\n" + $0 } ?? result
-                self.card.showResult(title: title, body: body, actionTitle: keepsResult ? "替换" : nil)
+                self.card.showResult(title: flows ? "✓ " + title : title, body: body, actionTitle: keepsResult ? "替换" : nil)
                 self.showCard()
                 done?()
             } catch {

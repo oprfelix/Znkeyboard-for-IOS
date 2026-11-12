@@ -1,3 +1,4 @@
+import PinyinCore
 import UIKit
 
 /// Buttons answer at once, yet a drag that starts on one still scrolls.
@@ -63,7 +64,8 @@ final class CandidateBarView: UIView, UIScrollViewDelegate {
     private var rowEnd: CGFloat = 0
     private var placedSize = CGSize.zero
     private let tools = UIStackView()
-    private let translate = UIButton(type: .system)
+    /// The top layer: 翻译 with a slanted edge that casts a shadow on the language under it.
+    private let translate = SlantedButton(type: .system)
     /// 翻译为 and the language chip share one tinted pill, as on Android.
     private let translatePill = UIView()
     private let languageChip = UIButton(type: .system)
@@ -99,26 +101,31 @@ final class CandidateBarView: UIView, UIScrollViewDelegate {
             item.translatesAutoresizingMaskIntoConstraints = false
             addSubview(item)
         }
-        translate.setTitle("翻译为", for: .normal)
+        translate.setTitle("翻译", for: .normal)
         styleTool(translate)
         styleAI(translate, symbol: "translate")
-        translate.contentEdgeInsets.right = 10
         translate.backgroundColor = .clear
+        translate.layer.cornerRadius = 0
+        translate.titleLabel?.font = .systemFont(ofSize: 14, weight: .semibold)
+        translate.contentEdgeInsets = UIEdgeInsets(top: 0, left: 10, bottom: 0, right: 12 + SlantedButton.slant)
         translate.addTarget(self, action: #selector(translateTapped), for: .touchUpInside)
-        translatePill.backgroundColor = UIColor.systemBlue.withAlphaComponent(0.15)
-        translatePill.layer.cornerRadius = 10
-        // Quieter than 翻译为: it sets where translate goes, it doesn't translate.
-        languageChip.titleLabel?.font = .systemFont(ofSize: 14, weight: .medium)
+        // The lower layer: the language shows from under 翻译's slanted edge.
+        translatePill.backgroundColor = UIColor.systemBlue.withAlphaComponent(0.1)
+        // A capsule: its end follows the keyboard's big top corner instead of fighting it.
+        translatePill.layer.cornerRadius = 17
+        translatePill.layer.cornerCurve = .continuous
+        translatePill.clipsToBounds = true
+        // Quieter than 翻译: it sets where translate goes, it doesn't translate.
+        languageChip.titleLabel?.font = .systemFont(ofSize: 14)
         languageChip.setTitleColor(.systemBlue, for: .normal)
         languageChip.tintColor = .systemBlue
-        languageChip.backgroundColor = UIColor.systemBlue.withAlphaComponent(0.2)
-        languageChip.layer.cornerRadius = 7
         languageChip.semanticContentAttribute = .forceRightToLeft
-        languageChip.contentEdgeInsets = UIEdgeInsets(top: 0, left: 10, bottom: 0, right: 12)
+        languageChip.contentEdgeInsets = UIEdgeInsets(top: 0, left: 8, bottom: 0, right: 12)
         languageChip.imageEdgeInsets = UIEdgeInsets(top: 0, left: 3, bottom: 0, right: -3)
         languageChip.accessibilityHint = "选择翻译语言"
         languageChip.addTarget(self, action: #selector(languageTapped), for: .touchUpInside)
-        for item in [translate, languageChip] as [UIView] {
+        // The chip first, so 翻译 and its shadow lie over it.
+        for item in [languageChip, translate] as [UIView] {
             item.translatesAutoresizingMaskIntoConstraints = false
             translatePill.addSubview(item)
         }
@@ -171,9 +178,11 @@ final class CandidateBarView: UIView, UIScrollViewDelegate {
             translate.topAnchor.constraint(equalTo: translatePill.topAnchor),
             translate.bottomAnchor.constraint(equalTo: translatePill.bottomAnchor),
             languageChip.leadingAnchor.constraint(equalTo: translate.trailingAnchor),
-            languageChip.trailingAnchor.constraint(equalTo: translatePill.trailingAnchor, constant: -4),
-            languageChip.topAnchor.constraint(equalTo: translatePill.topAnchor, constant: 4),
-            languageChip.bottomAnchor.constraint(equalTo: translatePill.bottomAnchor, constant: -4),
+            languageChip.trailingAnchor.constraint(equalTo: translatePill.trailingAnchor),
+            languageChip.topAnchor.constraint(equalTo: translatePill.topAnchor),
+            languageChip.bottomAnchor.constraint(equalTo: translatePill.bottomAnchor),
+            // As wide as the longest name, so changing language doesn't move anything.
+            languageChip.widthAnchor.constraint(greaterThanOrEqualToConstant: Self.chipWidth),
             offer.heightAnchor.constraint(equalToConstant: 34),
             offerClose.heightAnchor.constraint(equalToConstant: 34),
             offerClose.widthAnchor.constraint(equalToConstant: 40),
@@ -308,7 +317,9 @@ final class CandidateBarView: UIView, UIScrollViewDelegate {
     }
 
     /// The toolbar when nothing is being typed; [offering] asks whether to translate what was copied.
-    func showTools(languageName: String, offering: Bool, saved: SavedTextPanelView.Tab? = nil, choosingLanguage: Bool = false) {
+    /// [hasText]: something to translate is there; [selection]: only the selected text goes.
+    func showTools(languageName: String, offering: Bool, saved: SavedTextPanelView.Tab? = nil, choosingLanguage: Bool = false,
+                   hasText: Bool = true, selection: Bool = false) {
         // The icon of the open panel stands out; tapping it again closes the panel.
         for (button, tab) in [(clipboardButton, SavedTextPanelView.Tab.clipboard), (phrasesButton, .phrases), (helpButton, .help)] {
             button.backgroundColor = saved == tab ? KeyboardKeysView.letterKey : .clear
@@ -323,6 +334,11 @@ final class CandidateBarView: UIView, UIScrollViewDelegate {
         languageChip.setImage(UIImage(systemName: choosingLanguage ? "chevron.up" : "chevron.down",
                                       withConfiguration: UIImage.SymbolConfiguration(pointSize: 10, weight: .bold)), for: .normal)
         translatePill.isHidden = offering
+        translate.setTitle(selection ? "翻译选中" : "翻译", for: .normal)
+        // Grey with nothing to translate; a tap still says why.
+        translate.alpha = hasText ? 1 : 0.4
+        translate.accessibilityLabel = (selection ? "翻译选中的文字成" : "翻译成") + languageName
+        languageChip.accessibilityLabel = "更换翻译语言，当前\(languageName)"
         offer.isHidden = !offering
         offerClose.isHidden = !offering
         offer.setTitle("翻译刚复制的外文", for: .normal)
@@ -353,6 +369,13 @@ final class CandidateBarView: UIView, UIScrollViewDelegate {
     @objc private func clipboardTapped() { onClipboard?() }
     @objc private func phrasesTapped() { onPhrases?() }
     @objc private func helpTapped() { onHelp?() }
+
+    /// The chip's width for the longest language name, chevron and padding included.
+    private static let chipWidth: CGFloat = {
+        let font = UIFont.systemFont(ofSize: 14)
+        let widest = TranslateLanguage.all.map { ($0.chineseName as NSString).size(withAttributes: [.font: font]).width }.max() ?? 56
+        return ceil(widest) + 10 + 12 + 13
+    }()
 
     static let clipboardSymbol = "doc.on.clipboard"
     static let phrasesSymbol = "text.bubble"
@@ -412,4 +435,49 @@ final class CandidateBarView: UIView, UIScrollViewDelegate {
     private static let minItemWidth: CGFloat = 52
     private static let itemFont = UIFont.systemFont(ofSize: 20)
     private static let firstFont = UIFont.systemFont(ofSize: 20, weight: .semibold)
+}
+
+/// 翻译 as the top layer of the translate pill: a fill whose right edge slants like "/", with a
+/// soft shadow on that edge, so the language beside it reads as the layer underneath.
+final class SlantedButton: UIButton {
+    static let slant: CGFloat = 10
+    private let shape = CAShapeLayer()
+    /// Opaque, so the shadow falls on the lower layer and not through this one.
+    private static let fill = UIColor { $0.userInterfaceStyle == .dark
+        ? UIColor(red: 0.14, green: 0.27, blue: 0.45, alpha: 1)
+        : UIColor(red: 0.80, green: 0.89, blue: 1.0, alpha: 1) }
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        shape.shadowColor = UIColor.black.cgColor
+        shape.shadowOffset = CGSize(width: 2, height: 0)
+        shape.shadowRadius = 3
+        layer.insertSublayer(shape, at: 0)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("no storyboards") }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        // UIButton adds its image view's layer at the bottom; the fill goes back under it.
+        if layer.sublayers?.first !== shape { layer.insertSublayer(shape, at: 0) }
+        let w = bounds.width, h = bounds.height
+        let path = UIBezierPath()
+        path.move(to: .zero)
+        path.addLine(to: CGPoint(x: w, y: 0))
+        path.addLine(to: CGPoint(x: w - Self.slant, y: h))
+        path.addLine(to: CGPoint(x: 0, y: h))
+        path.close()
+        shape.frame = bounds
+        shape.path = path.cgPath
+        shape.shadowPath = path.cgPath
+        shape.fillColor = Self.fill.resolvedColor(with: traitCollection).cgColor
+        shape.shadowOpacity = traitCollection.userInterfaceStyle == .dark ? 0.5 : 0.25
+    }
+
+    override func traitCollectionDidChange(_ previous: UITraitCollection?) {
+        super.traitCollectionDidChange(previous)
+        setNeedsLayout()
+    }
 }
