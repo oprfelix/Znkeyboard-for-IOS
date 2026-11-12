@@ -8,6 +8,9 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
     private let saved = SavedTextPanelView()
     /// Which saved texts cover the keys, if any.
     private var savedTab: SavedTextPanelView.Tab?
+    /// The translate languages cover the keys.
+    private let languages = LanguagePanelView()
+    private var choosingLanguage = false
     private let typing = AdaptiveTyping()
     private var afterConsent: (() -> Void)?
     private let bar = CandidateBarView()
@@ -87,6 +90,26 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
             saved.bottomAnchor.constraint(equalTo: keys.bottomAnchor),
         ])
         saved.isHidden = true
+        languages.translatesAutoresizingMaskIntoConstraints = false
+        root.addSubview(languages)
+        NSLayoutConstraint.activate([
+            languages.topAnchor.constraint(equalTo: keys.topAnchor),
+            languages.leadingAnchor.constraint(equalTo: keys.leadingAnchor),
+            languages.trailingAnchor.constraint(equalTo: keys.trailingAnchor),
+            languages.bottomAnchor.constraint(equalTo: keys.bottomAnchor),
+        ])
+        languages.isHidden = true
+        languages.onPick = { [weak self] language in
+            SharedSettings.translateLanguage = language
+            self?.choosingLanguage = false
+            self?.render()
+        }
+        bar.onLanguage = { [weak self] in
+            guard let self else { return }
+            choosingLanguage.toggle()
+            if choosingLanguage { savedTab = nil }
+            render()
+        }
         saved.onPick = { [weak self] text in
             self?.closeSaved()
             self?.session?.typeLiteral(text)
@@ -251,6 +274,7 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
         keys.showsGlobe = needsInputModeSwitchKey
         // Each time it comes up it is a keyboard, not the panel left open last time.
         savedTab = nil
+        choosingLanguage = false
         applySettings()
         noticeCopied()
         render()
@@ -429,11 +453,16 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
         let expanded = session.expanded && !session.items.isEmpty
         if expanded { grid.show(session.items) }
         if session.isComposing, savedTab != nil { savedTab = nil }
+        if session.isComposing || savedTab != nil || hasNewCopy { choosingLanguage = false }
+        let covered = savedTab != nil || choosingLanguage
         saved.isHidden = savedTab == nil
-        grid.isHidden = !expanded || savedTab != nil
-        keys.isHidden = expanded || savedTab != nil
+        languages.isHidden = !choosingLanguage
+        if choosingLanguage { languages.show(selected: SharedSettings.translateLanguage) }
+        grid.isHidden = !expanded || covered
+        keys.isHidden = expanded || covered
         if !session.isComposing, session.items.isEmpty {
-            bar.showTools(languageName: SharedSettings.translateLanguage.chineseName, offering: hasNewCopy, saved: savedTab)
+            bar.showTools(languageName: SharedSettings.translateLanguage.chineseName, offering: hasNewCopy, saved: savedTab,
+                          choosingLanguage: choosingLanguage)
             return
         }
         bar.show(
@@ -551,8 +580,9 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
 
     private func showCard() {
         // A card over the clipboard or phrases would be two things at once.
-        if savedTab != nil {
+        if savedTab != nil || choosingLanguage {
             savedTab = nil
+            choosingLanguage = false
             render()
         }
         card.isHidden = false

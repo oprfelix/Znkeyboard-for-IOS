@@ -62,20 +62,20 @@ public struct TranslateLanguage: Hashable {
     public let chineseName: String
 
     public static let all: [TranslateLanguage] = [
-        .init(code: "EN", name: "English", chineseName: "英文"),
+        .init(code: "EN", name: "English", chineseName: "英语"),
         .init(code: "ZH", name: "Simplified Chinese", chineseName: "简体中文"),
         .init(code: "TW", name: "Traditional Chinese", chineseName: "繁体中文"),
-        .init(code: "ES", name: "Spanish", chineseName: "西班牙文"),
-        .init(code: "FR", name: "French", chineseName: "法文"),
-        .init(code: "AR", name: "Arabic", chineseName: "阿拉伯文"),
-        .init(code: "RU", name: "Russian", chineseName: "俄文"),
-        .init(code: "PT", name: "Portuguese", chineseName: "葡萄牙文"),
-        .init(code: "DE", name: "German", chineseName: "德文"),
-        .init(code: "JA", name: "Japanese", chineseName: "日文"),
-        .init(code: "KO", name: "Korean", chineseName: "韩文"),
-        .init(code: "ID", name: "Indonesian", chineseName: "印尼文"),
-        .init(code: "VI", name: "Vietnamese", chineseName: "越南文"),
-        .init(code: "TH", name: "Thai", chineseName: "泰文"),
+        .init(code: "ES", name: "Spanish", chineseName: "西班牙语"),
+        .init(code: "FR", name: "French", chineseName: "法语"),
+        .init(code: "AR", name: "Arabic", chineseName: "阿拉伯语"),
+        .init(code: "RU", name: "Russian", chineseName: "俄语"),
+        .init(code: "PT", name: "Portuguese", chineseName: "葡萄牙语"),
+        .init(code: "DE", name: "German", chineseName: "德语"),
+        .init(code: "JA", name: "Japanese", chineseName: "日语"),
+        .init(code: "KO", name: "Korean", chineseName: "韩语"),
+        .init(code: "ID", name: "Indonesian", chineseName: "印尼语"),
+        .init(code: "VI", name: "Vietnamese", chineseName: "越南语"),
+        .init(code: "TH", name: "Thai", chineseName: "泰语"),
     ]
 }
 

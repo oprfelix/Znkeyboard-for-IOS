@@ -40,6 +40,8 @@ final class CandidateBarView: UIView, UIScrollViewDelegate {
     var onFix: (() -> Void)?
     var onExpand: (() -> Void)?
     var onTranslate: (() -> Void)?
+    /// The language chip inside the translate pill: picks where translate goes.
+    var onLanguage: (() -> Void)?
     var onOffer: (() -> Void)?
     var onDismissOffer: (() -> Void)?
     var onClipboard: (() -> Void)?
@@ -62,6 +64,9 @@ final class CandidateBarView: UIView, UIScrollViewDelegate {
     private var placedSize = CGSize.zero
     private let tools = UIStackView()
     private let translate = UIButton(type: .system)
+    /// 翻译为 and the language chip share one tinted pill, as on Android.
+    private let translatePill = UIView()
+    private let languageChip = UIButton(type: .system)
     private let offer = UIButton(type: .system)
     private let offerClose = UIButton(type: .system)
     private let clipboardButton = ToolIconButton(type: .system)
@@ -94,10 +99,29 @@ final class CandidateBarView: UIView, UIScrollViewDelegate {
             item.translatesAutoresizingMaskIntoConstraints = false
             addSubview(item)
         }
-        translate.setTitle("翻译", for: .normal)
+        translate.setTitle("翻译为", for: .normal)
         styleTool(translate)
         styleAI(translate, symbol: "translate")
+        translate.contentEdgeInsets.right = 10
+        translate.backgroundColor = .clear
         translate.addTarget(self, action: #selector(translateTapped), for: .touchUpInside)
+        translatePill.backgroundColor = UIColor.systemBlue.withAlphaComponent(0.15)
+        translatePill.layer.cornerRadius = 10
+        // Quieter than 翻译为: it sets where translate goes, it doesn't translate.
+        languageChip.titleLabel?.font = .systemFont(ofSize: 14, weight: .medium)
+        languageChip.setTitleColor(.systemBlue, for: .normal)
+        languageChip.tintColor = .systemBlue
+        languageChip.backgroundColor = UIColor.systemBlue.withAlphaComponent(0.2)
+        languageChip.layer.cornerRadius = 7
+        languageChip.semanticContentAttribute = .forceRightToLeft
+        languageChip.contentEdgeInsets = UIEdgeInsets(top: 0, left: 10, bottom: 0, right: 12)
+        languageChip.imageEdgeInsets = UIEdgeInsets(top: 0, left: 3, bottom: 0, right: -3)
+        languageChip.accessibilityHint = "选择翻译语言"
+        languageChip.addTarget(self, action: #selector(languageTapped), for: .touchUpInside)
+        for item in [translate, languageChip] as [UIView] {
+            item.translatesAutoresizingMaskIntoConstraints = false
+            translatePill.addSubview(item)
+        }
         styleTool(offer)
         // Copied text waits for an answer, so this is the one solid button.
         offer.setTitleColor(.white, for: .normal)
@@ -133,7 +157,8 @@ final class CandidateBarView: UIView, UIScrollViewDelegate {
         // A long language name gives way before the icons do.
         translate.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         translate.titleLabel?.lineBreakMode = .byTruncatingTail
-        for item in [translate, offer, offerClose, spacer, clipboardButton, phrasesButton, helpButton] as [UIView] { tools.addArrangedSubview(item) }
+        languageChip.setContentCompressionResistancePriority(.required, for: .horizontal)
+        for item in [translatePill, offer, offerClose, spacer, clipboardButton, phrasesButton, helpButton] as [UIView] { tools.addArrangedSubview(item) }
         addSubview(tools)
         NSLayoutConstraint.activate([
             tools.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
@@ -141,7 +166,14 @@ final class CandidateBarView: UIView, UIScrollViewDelegate {
             // The whole bar's height, so the icons' wider hit areas are inside the stack too.
             tools.topAnchor.constraint(equalTo: topAnchor),
             tools.bottomAnchor.constraint(equalTo: bottomAnchor),
-            translate.heightAnchor.constraint(equalToConstant: 34),
+            translatePill.heightAnchor.constraint(equalToConstant: 34),
+            translate.leadingAnchor.constraint(equalTo: translatePill.leadingAnchor),
+            translate.topAnchor.constraint(equalTo: translatePill.topAnchor),
+            translate.bottomAnchor.constraint(equalTo: translatePill.bottomAnchor),
+            languageChip.leadingAnchor.constraint(equalTo: translate.trailingAnchor),
+            languageChip.trailingAnchor.constraint(equalTo: translatePill.trailingAnchor, constant: -4),
+            languageChip.topAnchor.constraint(equalTo: translatePill.topAnchor, constant: 4),
+            languageChip.bottomAnchor.constraint(equalTo: translatePill.bottomAnchor, constant: -4),
             offer.heightAnchor.constraint(equalToConstant: 34),
             offerClose.heightAnchor.constraint(equalToConstant: 34),
             offerClose.widthAnchor.constraint(equalToConstant: 40),
@@ -276,7 +308,7 @@ final class CandidateBarView: UIView, UIScrollViewDelegate {
     }
 
     /// The toolbar when nothing is being typed; [offering] asks whether to translate what was copied.
-    func showTools(languageName: String, offering: Bool, saved: SavedTextPanelView.Tab? = nil) {
+    func showTools(languageName: String, offering: Bool, saved: SavedTextPanelView.Tab? = nil, choosingLanguage: Bool = false) {
         // The icon of the open panel stands out; tapping it again closes the panel.
         for (button, tab) in [(clipboardButton, SavedTextPanelView.Tab.clipboard), (phrasesButton, .phrases), (helpButton, .help)] {
             button.backgroundColor = saved == tab ? KeyboardKeysView.letterKey : .clear
@@ -287,8 +319,10 @@ final class CandidateBarView: UIView, UIScrollViewDelegate {
         fix.isHidden = true
         setExpand(hidden: true, up: false)
         tools.isHidden = false
-        translate.setTitle("翻译为\(languageName)", for: .normal)
-        translate.isHidden = offering
+        languageChip.setTitle(languageName, for: .normal)
+        languageChip.setImage(UIImage(systemName: choosingLanguage ? "chevron.up" : "chevron.down",
+                                      withConfiguration: UIImage.SymbolConfiguration(pointSize: 10, weight: .bold)), for: .normal)
+        translatePill.isHidden = offering
         offer.isHidden = !offering
         offerClose.isHidden = !offering
         offer.setTitle("翻译刚复制的外文", for: .normal)
@@ -313,6 +347,7 @@ final class CandidateBarView: UIView, UIScrollViewDelegate {
     }
 
     @objc private func translateTapped() { onTranslate?() }
+    @objc private func languageTapped() { onLanguage?() }
     @objc private func offerTapped() { onOffer?() }
     @objc private func offerCloseTapped() { onDismissOffer?() }
     @objc private func clipboardTapped() { onClipboard?() }
