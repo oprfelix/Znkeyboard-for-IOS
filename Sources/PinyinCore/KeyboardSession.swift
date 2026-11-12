@@ -93,6 +93,9 @@ public final class KeyboardSession {
     private var taps = PinyinTapBuffer()
     private let decoding: DispatchQueue?
     private var nextJob = 0
+    /// Read on the decoding queue: AI 整句排序 scores only the newest input, and not while the
+    /// main thread waits in [settle].
+    private let scoreGate = ScoreGate()
     /// The newest letters whose candidates are not in yet.
     private var waiting: Job?
     private var running: Int?
@@ -620,6 +623,7 @@ public final class KeyboardSession {
             if !nineKey { target?.setMarkedText(text) }
             predictions = []
             nextJob += 1
+            scoreGate.set(latest: nextJob)
             let job = Job(id: nextJob, text: text, before: learner.context ?? fieldContext, taps: taps.snapshot)
             if decoding == nil {
                 show(read(job))
@@ -654,6 +658,7 @@ public final class KeyboardSession {
     }
 
     private func read(_ job: Job) -> Reading {
+        engine.mayScore = { [scoreGate] in scoreGate.allows(job.id) }
         guard nineKey else {
             return Reading(found: engine.candidates(job.text, before: job.before, taps: job.taps), whole: PinyinEngine.isWholePinyin(job.text, lexicon))
         }
@@ -692,6 +697,9 @@ public final class KeyboardSession {
     /// Waits for the engine and brings the candidates up to the letters typed, so what follows
     /// sees the right ones and has the engine, lexicon and learner to itself.
     public func settle() {
+        // A commit is waiting: the model's reordering isn't worth the wait.
+        scoreGate.set(settling: true)
+        defer { scoreGate.set(settling: false) }
         if running != nil { decoding?.sync {} }
         running = nil
         guard let job = waiting else { return }
@@ -789,4 +797,16 @@ public final class KeyboardSession {
 
 extension Array {
     subscript(safe index: Int) -> Element? { indices.contains(index) ? self[index] : nil }
+}
+
+/// Whether the decoding queue may run the sentence model for a job: only the newest one, and not
+/// while the main thread is waiting for the engine.
+private final class ScoreGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var latest = 0
+    private var settling = false
+
+    func set(latest id: Int) { lock.lock(); latest = id; lock.unlock() }
+    func set(settling value: Bool) { lock.lock(); settling = value; lock.unlock() }
+    func allows(_ id: Int) -> Bool { lock.lock(); defer { lock.unlock() }; return id == latest && !settling }
 }

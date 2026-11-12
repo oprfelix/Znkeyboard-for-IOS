@@ -56,6 +56,9 @@ public final class PinyinEngine {
     private let decoder: SentenceDecoder
     /// AI 整句排序: reorders the readings of the whole input when set.
     public var scorer: SentenceScorer?
+    /// Asked just before [scorer] runs: false skips it for this input (typing has moved on, or the
+    /// keyboard is waiting to commit), so the slow model never holds up typing.
+    public var mayScore: () -> Bool = { true }
 
     public init(lexicon: PinyinLexicon) {
         self.lexicon = lexicon
@@ -85,7 +88,7 @@ public final class PinyinEngine {
 
     /// [sentences] reordered with [scorer]'s ln P, or as they are when it gives none.
     private func reranked(_ sentences: [SentenceDecoder.Sentence]) -> [SentenceDecoder.Sentence] {
-        guard let scores = scorer?.score(sentences.map(\.text)), scores.count == sentences.count else { return sentences }
+        guard mayScore(), let scores = scorer?.score(sentences.map(\.text)), scores.count == sentences.count else { return sentences }
         let value = sentences.indices.map { i in
             -sentences[i].cost + C.rerankModelWeight * scores[i] + C.rerankCharBonus * Float(sentences[i].text.count)
         }
