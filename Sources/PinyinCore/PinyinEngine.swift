@@ -1,5 +1,10 @@
 import Foundation
 
+/// Scores whole-input readings: ln P of each as a clause, or nil to leave them as decoded.
+public protocol SentenceScorer: AnyObject {
+    func score(_ texts: [String]) -> [Float]?
+}
+
 /// Turns typed pinyin into candidates: a port of PinyinEngine.kt.
 public final class PinyinEngine {
     public static let alternativesLimit = 20
@@ -31,6 +36,11 @@ public final class PinyinEngine {
         static let partialMatchLimit = 8
         static let singleSyllableLimit = 40
         static let maxSentences = 6
+        /// With a [scorer], the decoder's best this many readings are scored and reordered by
+        /// -cost + rerankModelWeight × ln P + rerankCharBonus × characters, as on Android.
+        static let rerankReadings = 8
+        static let rerankModelWeight: Float = 0.5
+        static let rerankCharBonus: Float = 3
         /// Other ways to split the input: only for inputs this short, at most this many splits,
         /// their best words, placed after the first few candidates.
         static let maxSplitLetters = 8
@@ -44,6 +54,8 @@ public final class PinyinEngine {
 
     private let lexicon: PinyinLexicon
     private let decoder: SentenceDecoder
+    /// AI 整句排序: reorders the readings of the whole input when set.
+    public var scorer: SentenceScorer?
 
     public init(lexicon: PinyinLexicon) {
         self.lexicon = lexicon
@@ -56,8 +68,10 @@ public final class PinyinEngine {
 
     private func rankedCandidates(_ input: String, before: SentenceDecoder.Context?, taps: SentenceDecoder.Taps?) -> [Candidate] {
         let words = wordCandidates(input)
-        let limit = lexicon.model == nil ? 1 : C.maxSentences
-        let sentences = decoder.decode(input, before: before, limit: limit, taps: taps)
+        let rerank = scorer != nil && lexicon.model != nil
+        let limit = lexicon.model == nil ? 1 : rerank ? max(C.rerankReadings, C.maxSentences) : C.maxSentences
+        let decoded = decoder.decode(input, before: before, limit: limit, taps: taps)
+        let sentences = rerank && decoded.count > 1 ? Array(reranked(decoded).prefix(C.maxSentences)) : decoded
         let length = input.utf8.count
         guard let sentence = sentences.first else { return withInitialWords(input, words, before) }
         let typed = input.replacingOccurrences(of: "'", with: "")
@@ -67,6 +81,15 @@ public final class PinyinEngine {
         }
         let whole = sentences.map { Self.wholeInput($0, length) }
         return withInitialWords(input, withSentences(whole, words, length), before)
+    }
+
+    /// [sentences] reordered with [scorer]'s ln P, or as they are when it gives none.
+    private func reranked(_ sentences: [SentenceDecoder.Sentence]) -> [SentenceDecoder.Sentence] {
+        guard let scores = scorer?.score(sentences.map(\.text)), scores.count == sentences.count else { return sentences }
+        let value = sentences.indices.map { i in
+            -sentences[i].cost + C.rerankModelWeight * scores[i] + C.rerankCharBonus * Float(sentences[i].text.count)
+        }
+        return sentences.indices.sorted { value[$0] > value[$1] }.map { sentences[$0] }
     }
 
     /// [composing] read as 9-key: as a whole sentence first, when nothing is locked or separated,

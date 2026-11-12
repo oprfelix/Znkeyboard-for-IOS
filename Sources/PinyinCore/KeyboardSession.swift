@@ -601,6 +601,16 @@ public final class KeyboardSession {
         changed()
     }
 
+    /// AI 整句排序: [scorer] reorders sentence readings from the next keystroke on. It is set on
+    /// the decoding queue, where the engine runs.
+    public func setSentenceScorer(_ scorer: SentenceScorer?) {
+        if let decoding {
+            decoding.async { [engine] in engine.scorer = scorer }
+        } else {
+            engine.scorer = scorer
+        }
+    }
+
     private func start(_ job: Job) {
         running = job.id
         decoding?.async { [self] in

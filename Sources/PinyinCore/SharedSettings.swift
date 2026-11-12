@@ -93,6 +93,27 @@ public enum SharedSettings {
         set { defaults.set(newValue, forKey: "doubleSpacePeriod") }
     }
 
+    /// AI 整句排序 (experimental): the character model reorders whole-input readings. Off by default.
+    public static var aiRerank: Bool {
+        get { flag("aiRerank", default: false) }
+        set {
+            defaults.set(newValue, forKey: "aiRerank")
+            defaults.removeObject(forKey: "aiRerankCalls")
+            defaults.removeObject(forKey: "aiRerankMillis")
+        }
+    }
+
+    /// Keystrokes scored since the setting last changed, and their milliseconds in all.
+    public static var aiRerankStats: (calls: Int, millis: Double) {
+        (defaults.integer(forKey: "aiRerankCalls"), defaults.double(forKey: "aiRerankMillis"))
+    }
+
+    public static func addAIRerankStats(calls: Int, millis: Double) {
+        guard calls > 0 else { return }
+        defaults.set(defaults.integer(forKey: "aiRerankCalls") + calls, forKey: "aiRerankCalls")
+        defaults.set(defaults.double(forKey: "aiRerankMillis") + millis, forKey: "aiRerankMillis")
+    }
+
     public static var adaptiveTouch: Bool {
         get { flag("adaptiveTouch", default: true) }
         set { defaults.set(newValue, forKey: "adaptiveTouch") }

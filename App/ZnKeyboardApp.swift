@@ -117,6 +117,7 @@ final class Store: ObservableObject {
     @Published var numberRow = SharedSettings.numberRow { didSet { SharedSettings.numberRow = numberRow } }
     @Published var nineKey = SharedSettings.nineKey { didSet { SharedSettings.nineKey = nineKey } }
     @Published var adaptiveTouch = SharedSettings.adaptiveTouch { didSet { SharedSettings.adaptiveTouch = adaptiveTouch } }
+    @Published var aiRerank = SharedSettings.aiRerank { didSet { SharedSettings.aiRerank = aiRerank } }
     @Published var phrases = SavedTexts.phrases { didSet { SavedTexts.phrases = phrases } }
     @Published var fullAccess = SharedSettings.keyboardHasFullAccess
     /// nil when iOS doesn't say which keyboards are on.
@@ -540,6 +541,15 @@ struct KeyboardPage: View {
     @EnvironmentObject private var store: Store
     @State private var text = ""
 
+    /// What AI 整句排序 does, or once on, how long the keyboard took per keystroke.
+    private var aiRerankNote: String {
+        let stats = SharedSettings.aiRerankStats
+        if store.aiRerank, stats.calls > 0 {
+            return String(format: "AI 整句排序：已排序 %d 次按键，平均每次 %.1f 毫秒。", stats.calls, stats.millis / Double(stats.calls))
+        }
+        return "AI 整句排序用手机上的语言模型给整句候选重新排序，不联网。"
+    }
+
     var body: some View {
         NavigationStack {
             List {
@@ -560,7 +570,7 @@ struct KeyboardPage: View {
                 } header: {
                     Text("布局")
                 }
-                Section("输入") {
+                Section {
                     NavigationLink {
                         FuzzyPage()
                     } label: {
@@ -579,9 +589,14 @@ struct KeyboardPage: View {
                             Text("\(store.phrases.count) 条").foregroundStyle(.secondary)
                         }
                     }
+                    Toggle(isOn: $store.aiRerank) { Label("AI 整句排序（实验）", systemImage: "sparkles").labelStyle(.tile) }
                     Toggle(isOn: $store.numberRow) { Label("数字行", systemImage: "number").labelStyle(.tile) }
                     Toggle(isOn: $store.autoCapitalize) { Label("英文句首大写", systemImage: "shift.fill").labelStyle(.tile) }
                     Toggle(isOn: $store.doubleSpace) { Label("双击空格输入句号", systemImage: "space").labelStyle(.tile) }
+                } header: {
+                    Text("输入")
+                } footer: {
+                    Text(aiRerankNote)
                 }
                 Section {
                     Toggle(isOn: $store.haptics) { Label("按键振动", systemImage: "iphone.radiowaves.left.and.right").labelStyle(.tile) }

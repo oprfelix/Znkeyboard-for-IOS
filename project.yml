@@ -12,7 +12,7 @@ settings:
     DEVELOPMENT_TEAM: 6DSHU7W7LQ
     CODE_SIGN_STYLE: Automatic
     MARKETING_VERSION: "1.0"
-    CURRENT_PROJECT_VERSION: "22"
+    CURRENT_PROJECT_VERSION: "23"
     SWIFT_VERSION: "5.0"
     TARGETED_DEVICE_FAMILY: "1"
 targets:
@@ -51,6 +51,10 @@ targets:
       - path: Sources/PinyinCore/Resources/en_char_trigram.bin
         buildPhase: resources
       - path: Sources/PinyinCore/Resources/pinyin_char_trigram.bin
+        buildPhase: resources
+      - path: Sources/PinyinCore/Resources/charlm.bin
+        buildPhase: resources
+      - path: Sources/PinyinCore/Resources/charlm_vocab.txt
         buildPhase: resources
     settings:
       base:

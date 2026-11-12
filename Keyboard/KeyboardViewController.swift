@@ -167,8 +167,50 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
             loadEngine()
         }
         session?.doubleSpacePeriod = SharedSettings.doubleSpacePeriod
+        syncSentenceScorer()
         heightConstraint?.constant = keyboardHeight
         updateShift()
+    }
+
+    // MARK: AI 整句排序
+
+    /// The character model while AI 整句排序 is on: loaded off the main thread the first time,
+    /// then handed to each session.
+    private var sentenceScorer: TimedSentenceScorer?
+    private var sentenceScorerLoading = false
+
+    private func syncSentenceScorer() {
+        guard SharedSettings.aiRerank else {
+            saveSentenceScorerStats()
+            sentenceScorer = nil
+            session?.setSentenceScorer(nil)
+            return
+        }
+        if let sentenceScorer {
+            session?.setSentenceScorer(sentenceScorer)
+            return
+        }
+        guard !sentenceScorerLoading,
+              let modelPath = Bundle.main.path(forResource: "charlm", ofType: "bin"),
+              let vocabPath = Bundle.main.path(forResource: "charlm_vocab", ofType: "txt") else { return }
+        sentenceScorerLoading = true
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let model = CharModel(path: modelPath, vocabPath: vocabPath)
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.sentenceScorerLoading = false
+                guard let model, SharedSettings.aiRerank else { return }
+                let scorer = TimedSentenceScorer(model)
+                self.sentenceScorer = scorer
+                self.session?.setSentenceScorer(scorer)
+            }
+        }
+    }
+
+    /// Adds the time spent scoring since the last save to the setting's summary in the app.
+    private func saveSentenceScorerStats() {
+        guard let (calls, millis) = sentenceScorer?.takeStats() else { return }
+        SharedSettings.addAIRerankStats(calls: calls, millis: millis)
     }
 
     /// English sentences start with a capital.
@@ -195,6 +237,7 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
             self?.scheduleSave()
         }
         savedClock = learner.data.clock
+        if let sentenceScorer { session?.setSentenceScorer(sentenceScorer) }
     }
 
     private static var learnedFile: URL {
@@ -238,6 +281,7 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
         pasteboardTimer?.invalidate()
         session?.settleOffer()
         saveLearning()
+        saveSentenceScorerStats()
     }
 
     private func saveLearning() {
@@ -668,3 +712,37 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
         textDocumentProxy.deleteBackward()
     }
 }
+
+/// The character model, timing each call for AI 整句排序's summary in the app. It runs on the
+/// session's decoding queue while the main thread takes the totals, hence the lock.
+final class TimedSentenceScorer: SentenceScorer {
+    private let model: CharModel
+    private let lock = NSLock()
+    private var calls = 0
+    private var millis = 0.0
+
+    init(_ model: CharModel) { self.model = model }
+
+    func score(_ texts: [String]) -> [Float]? {
+        let started = CFAbsoluteTimeGetCurrent()
+        let result = model.score(texts)
+        let elapsed = (CFAbsoluteTimeGetCurrent() - started) * 1000
+        lock.lock()
+        calls += 1
+        millis += elapsed
+        lock.unlock()
+        return result
+    }
+
+    /// The calls and milliseconds since the last time.
+    func takeStats() -> (Int, Double) {
+        lock.lock()
+        defer {
+            calls = 0
+            millis = 0
+            lock.unlock()
+        }
+        return (calls, millis)
+    }
+}
+
