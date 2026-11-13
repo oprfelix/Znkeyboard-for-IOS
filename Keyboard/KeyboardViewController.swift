@@ -140,6 +140,13 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
         card.onClose = { [weak self] in self?.closeCard() }
         card.onAction = { [weak self] in self?.cardAction() }
         bar.onTranslate = { [weak self] in self?.rewrite(translating: true) }
+        // As on Android: what is being typed goes in as the first candidate, then the field is translated.
+        bar.onQuickTranslate = { [weak self] in
+            guard let self, let session else { return }
+            if session.isComposing { session.tapItem(0) }
+            // The field reports the new text a moment after it goes in.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in self?.rewrite(translating: true) }
+        }
         bar.onOffer = { [weak self] in self?.readCopied() }
         bar.onDismissOffer = { [weak self] in
             self?.hasNewCopy = false
@@ -507,7 +514,9 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
             items: session.items,
             fixTitle: session.canFix ? (session.isChoosingWord ? "取消" : (session.editCaret == nil ? "改词" : "完成")) : nil,
             expanded: expanded,
-            selected: session.pointedItem ?? session.offerSelection
+            selected: session.pointedItem ?? session.offerSelection,
+            // Not over a punctuation offer or while picking a word to change.
+            translatable: !session.items.isEmpty && session.offerSelection == nil && !session.isChoosingWord
         )
     }
 

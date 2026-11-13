@@ -56,6 +56,11 @@ final class CandidateBarView: UIView, UIScrollViewDelegate {
     private let expand = UIButton(type: .system)
     private let divider = UIView()
     private var fixWidth: NSLayoutConstraint!
+    /// 文A beside the candidates, as on Android: translates what is being typed.
+    private let quickTranslate = ToolIconButton(type: .system)
+    private var quickTranslateWidth: NSLayoutConstraint!
+    /// The 文A beside the candidates: put the first one in, then translate.
+    var onQuickTranslate: (() -> Void)?
     private var expandShownUp: Bool?
     private var buttons: [UIButton] = []
     private var items: [String] = []
@@ -91,6 +96,15 @@ final class CandidateBarView: UIView, UIScrollViewDelegate {
         }
         fixWidth = fix.widthAnchor.constraint(equalToConstant: 0)
         fixWidth.isActive = true
+        // A plain 译 in a thin box, in the text's colour like the ▾ beside it: a blue icon stood out.
+        quickTranslate.setImage(Self.yiGlyph(), for: .normal)
+        quickTranslate.tintColor = .label
+        quickTranslate.accessibilityLabel = "翻译"
+        quickTranslate.addTarget(self, action: #selector(quickTranslateTapped), for: .touchUpInside)
+        quickTranslate.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(quickTranslate)
+        quickTranslateWidth = quickTranslate.widthAnchor.constraint(equalToConstant: 0)
+        quickTranslateWidth.isActive = true
         fix.titleLabel?.font = .systemFont(ofSize: 15)
         fix.setTitleColor(.label, for: .normal)
         fix.addTarget(self, action: #selector(fixTapped), for: .touchUpInside)
@@ -202,7 +216,10 @@ final class CandidateBarView: UIView, UIScrollViewDelegate {
             divider.centerYAnchor.constraint(equalTo: centerYAnchor),
             divider.widthAnchor.constraint(equalToConstant: 1 / UIScreen.main.scale),
             divider.heightAnchor.constraint(equalToConstant: 26),
-            fix.trailingAnchor.constraint(equalTo: divider.leadingAnchor, constant: -4),
+            quickTranslate.trailingAnchor.constraint(equalTo: divider.leadingAnchor),
+            quickTranslate.centerYAnchor.constraint(equalTo: scroller.centerYAnchor),
+            quickTranslate.heightAnchor.constraint(equalToConstant: 34),
+            fix.trailingAnchor.constraint(equalTo: quickTranslate.leadingAnchor, constant: -2),
             fix.centerYAnchor.constraint(equalTo: scroller.centerYAnchor),
             scroller.trailingAnchor.constraint(equalTo: fix.leadingAnchor, constant: -4),
         ])
@@ -211,8 +228,12 @@ final class CandidateBarView: UIView, UIScrollViewDelegate {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("no storyboards") }
 
-    func show(label text: String, items: [String], fixTitle: String?, expanded: Bool, selected: Int? = nil) {
+    /// [translatable]: the 文A shows beside the candidates.
+    func show(label text: String, items: [String], fixTitle: String?, expanded: Bool, selected: Int? = nil, translatable: Bool = false) {
         selectedItem = selected
+        quickTranslate.isHidden = !translatable
+        let translateWidth: CGFloat = translatable ? 28 : 0
+        if quickTranslateWidth.constant != translateWidth { quickTranslateWidth.constant = translateWidth }
         tools.isHidden = true
         label.isHidden = false
         scroller.isHidden = false
@@ -330,6 +351,7 @@ final class CandidateBarView: UIView, UIScrollViewDelegate {
         fix.isHidden = true
         setExpand(hidden: true, up: false)
         tools.isHidden = false
+        quickTranslate.isHidden = true
         languageChip.setTitle(languageName, for: .normal)
         languageChip.setImage(UIImage(systemName: choosingLanguage ? "chevron.up" : "chevron.down",
                                       withConfiguration: UIImage.SymbolConfiguration(pointSize: 10, weight: .bold)), for: .normal)
@@ -363,6 +385,7 @@ final class CandidateBarView: UIView, UIScrollViewDelegate {
     }
 
     @objc private func translateTapped() { onTranslate?() }
+    @objc private func quickTranslateTapped() { onQuickTranslate?() }
     @objc private func languageTapped() { onLanguage?() }
     @objc private func offerTapped() { onOffer?() }
     @objc private func offerCloseTapped() { onDismissOffer?() }
@@ -376,6 +399,21 @@ final class CandidateBarView: UIView, UIScrollViewDelegate {
         let widest = TranslateLanguage.all.map { ($0.chineseName as NSString).size(withAttributes: [.font: font]).width }.max() ?? 56
         return ceil(widest) + 10 + 12 + 13
     }()
+
+    /// 「译」 in a thin rounded square, drawn as a template so it takes the label colour.
+    static func yiGlyph() -> UIImage {
+        let size = CGSize(width: 22, height: 22)
+        return UIGraphicsImageRenderer(size: size).image { _ in
+            let box = UIBezierPath(roundedRect: CGRect(x: 1, y: 1, width: 20, height: 20), cornerRadius: 5)
+            box.lineWidth = 1.3
+            UIColor.black.setStroke()
+            box.stroke()
+            let text = "译" as NSString
+            let attrs: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 13, weight: .regular), .foregroundColor: UIColor.black]
+            let t = text.size(withAttributes: attrs)
+            text.draw(at: CGPoint(x: (size.width - t.width) / 2, y: (size.height - t.height) / 2), withAttributes: attrs)
+        }.withRenderingMode(.alwaysTemplate)
+    }
 
     static let clipboardSymbol = "doc.on.clipboard"
     static let phrasesSymbol = "text.bubble"
