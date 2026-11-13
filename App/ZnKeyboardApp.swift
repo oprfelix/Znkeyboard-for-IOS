@@ -942,7 +942,7 @@ struct OnboardingView: View {
                     .font(.footnote).foregroundStyle(.secondary)
                 TryField(text: $text, placeholder: "点这里，切到 ZnKeyboard", focus: focusTry)
                 if stillWaiting {
-                    Text("还没打勾？看看「允许完全访问」是不是打开了，以及现在用的是不是 ZnKeyboard（键盘上方有「翻译为」按钮）。")
+                    Text("还没打勾？看看「允许完全访问」是不是打开了，以及现在用的是不是 ZnKeyboard（键盘上方有「翻译」按钮）。")
                         .font(.footnote).foregroundStyle(.orange)
                 }
             }

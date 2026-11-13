@@ -66,7 +66,7 @@ final class CandidateBarView: UIView, UIScrollViewDelegate {
     private let tools = UIStackView()
     /// The top layer: 翻译 with a slanted edge that casts a shadow on the language under it.
     private let translate = SlantedButton(type: .system)
-    /// 翻译为 and the language chip share one tinted pill, as on Android.
+    /// 翻译 and the language chip share one capsule, 翻译 on top, as on Android.
     private let translatePill = UIView()
     private let languageChip = UIButton(type: .system)
     private let offer = UIButton(type: .system)
