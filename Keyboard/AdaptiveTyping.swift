@@ -48,14 +48,21 @@ final class AdaptiveTyping {
         if let letters = read(Self.pinyinLettersFile) { _ = pinyin.decodePersonal(letters) }
     }
 
-    func save() {
+    /// Encodes what changed here (the models are main-thread only) and writes it on [queue], so
+    /// typing never waits for the files.
+    func save(on queue: DispatchQueue) {
         learner.flush()
         guard learner.confirmations != savedConfirmations else { return }
         savedConfirmations = learner.confirmations
-        try? FileManager.default.createDirectory(at: Self.directory, withIntermediateDirectories: true)
-        try? portrait.encode().write(to: Self.directory.appendingPathComponent(Self.portraitFile), options: .atomic)
-        try? landscape.encode().write(to: Self.directory.appendingPathComponent(Self.landscapeFile), options: .atomic)
-        try? english.encodePersonal().write(to: Self.directory.appendingPathComponent(Self.lettersFile), options: .atomic)
-        try? pinyin.encodePersonal().write(to: Self.directory.appendingPathComponent(Self.pinyinLettersFile), options: .atomic)
+        let files = [
+            (Self.portraitFile, portrait.encode()),
+            (Self.landscapeFile, landscape.encode()),
+            (Self.lettersFile, english.encodePersonal()),
+            (Self.pinyinLettersFile, pinyin.encodePersonal()),
+        ]
+        queue.async {
+            try? FileManager.default.createDirectory(at: Self.directory, withIntermediateDirectories: true)
+            for (name, data) in files { try? data.write(to: Self.directory.appendingPathComponent(name), options: .atomic) }
+        }
     }
 }

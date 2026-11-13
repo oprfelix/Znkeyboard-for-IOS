@@ -96,6 +96,13 @@ public final class KeyboardSession {
     /// Read on the decoding queue: AI 整句排序 scores only the newest input, and not while the
     /// main thread waits in [settle].
     private let scoreGate = ScoreGate()
+    /// AI 整句排序 is on: candidates show in the decoder's order at once, then in the model's
+    /// once typing pauses.
+    private var ranks = false
+    /// How long the engine took per reading, for the app's 性能诊断 page.
+    private let decodeTimes = DecodeTimes()
+    /// How long typing must pause before AI 整句排序 runs.
+    private static let rankPause: TimeInterval = 0.1
     /// The newest letters whose candidates are not in yet.
     private var waiting: Job?
     private var running: Int?
@@ -641,6 +648,7 @@ public final class KeyboardSession {
     /// AI 整句排序: [scorer] reorders sentence readings from the next keystroke on. It is set on
     /// the decoding queue, where the engine runs.
     public func setSentenceScorer(_ scorer: SentenceScorer?) {
+        ranks = scorer != nil
         if let decoding {
             decoding.async { [engine] in engine.scorer = scorer }
         } else {
@@ -650,15 +658,38 @@ public final class KeyboardSession {
 
     private func start(_ job: Job) {
         running = job.id
+        // In the background the model never holds candidates up: they come in the decoder's order.
+        let ranked = !ranks
         decoding?.async { [self] in
-            let reading = read(job)
+            let started = CFAbsoluteTimeGetCurrent()
+            let reading = read(job, ranked: ranked)
+            decodeTimes.add((CFAbsoluteTimeGetCurrent() - started) * 1000)
             decoded = (job.id, reading)
             DispatchQueue.main.async { [self] in finished(job.id, reading) }
         }
     }
 
-    private func read(_ job: Job) -> Reading {
-        engine.mayScore = { [scoreGate] in scoreGate.allows(job.id) }
+    /// Once typing pauses on [job], AI 整句排序 reads it again in the model's order; nothing is
+    /// shown if another letter came, or a commit is waiting, by then.
+    private func rankLater(_ job: Job) {
+        guard ranks, !nineKey, let decoding else { return }
+        decoding.asyncAfter(deadline: .now() + Self.rankPause) { [self] in
+            guard scoreGate.allows(job.id) else { return }
+            let reading = read(job, ranked: true)
+            DispatchQueue.main.async { [self] in
+                guard nextJob == job.id, running == nil, waiting == nil, composing == job.text, scoreGate.allows(job.id) else { return }
+                decoded = nil
+                show(reading)
+                changed()
+            }
+        }
+    }
+
+    /// Per-reading engine times since the last call: (readings, total ms, slowest ms).
+    public func takeDecodeTimes() -> (count: Int, millis: Double, max: Double) { decodeTimes.take() }
+
+    private func read(_ job: Job, ranked: Bool = true) -> Reading {
+        engine.mayScore = ranked ? { [scoreGate] in scoreGate.allows(job.id) } : { false }
         guard nineKey else {
             return Reading(found: engine.candidates(job.text, before: job.before, taps: job.taps), whole: PinyinEngine.isWholePinyin(job.text, lexicon))
         }
@@ -678,6 +709,7 @@ public final class KeyboardSession {
             waiting = nil
             show(reading)
             changed()
+            rankLater(job)
         } else {
             start(job)
         }
@@ -809,4 +841,19 @@ private final class ScoreGate: @unchecked Sendable {
     func set(latest id: Int) { lock.lock(); latest = id; lock.unlock() }
     func set(settling value: Bool) { lock.lock(); settling = value; lock.unlock() }
     func allows(_ id: Int) -> Bool { lock.lock(); defer { lock.unlock() }; return id == latest && !settling }
+}
+
+/// Engine times added on the decoding queue and taken on the main thread.
+private final class DecodeTimes: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+    private var millis = 0.0
+    private var slowest = 0.0
+
+    func add(_ ms: Double) { lock.lock(); count += 1; millis += ms; slowest = max(slowest, ms); lock.unlock() }
+
+    func take() -> (count: Int, millis: Double, max: Double) {
+        lock.lock(); defer { count = 0; millis = 0; slowest = 0; lock.unlock() }
+        return (count, millis, slowest)
+    }
 }

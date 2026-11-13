@@ -45,6 +45,11 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        // A hot phone slows down; AI 整句排序 rests until it cools.
+        NotificationCenter.default.addObserver(forName: ProcessInfo.thermalStateDidChangeNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.notePerfThermal()
+            self?.syncSentenceScorer()
+        }
         // The app being typed in leaving the screen is the last sure moment to write anything.
         for name in [Notification.Name.NSExtensionHostWillResignActive, .NSExtensionHostDidEnterBackground] {
             NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
@@ -158,6 +163,7 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
         (view as? UIInputView)?.allowsSelfSizing = true
         heightConstraint = height
         keys.onKey = { [weak self] key in self?.pressed(key) }
+        keys.onKeyTime = { [weak self] ms in self?.noteKeyTime(ms) }
         keys.onLetter = { [weak self] text, tap, sample in self?.typed(text, tap, sample) }
         keys.typing = typing
         keys.onMoveCaret = { [weak self] steps in self?.moveCaret(steps) }
@@ -212,6 +218,13 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
     private var sentenceScorerLoading = false
 
     private func syncSentenceScorer() {
+        if Self.phoneIsHot {
+            if !pausedForHeat, sentenceScorer != nil { perf.thermalPauses += 1 }
+            pausedForHeat = true
+            session?.setSentenceScorer(nil)
+            return
+        }
+        pausedForHeat = false
         guard SharedSettings.aiRerank else {
             saveSentenceScorerStats()
             sentenceScorer = nil
@@ -360,12 +373,64 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
     private func persistLearning() {
         saveTimer?.invalidate()
         saveTimer = nil
-        typing.save()
+        flushPerf()
+        typing.save(on: Self.saveQueue)
         guard let learner = session?.learner, learner.data.clock != savedClock else { return }
+        // Encoded here, where the learner lives; written off the main thread, so a key pressed
+        // just then doesn't wait for the file.
         let data = learner.data.encode()
-        try? FileManager.default.createDirectory(at: Self.learnedFile.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try? data.write(to: Self.learnedFile, options: .atomic)
+        let file = Self.learnedFile
+        Self.saveQueue.async {
+            try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try? data.write(to: file, options: .atomic)
+        }
         savedClock = learner.data.clock
+    }
+
+    private static let saveQueue = DispatchQueue(label: "keyboard.save", qos: .utility)
+
+    // MARK: 性能诊断
+
+    private var perf = PerfReport()
+    private var pausedForHeat = false
+
+    private static var phoneIsHot: Bool {
+        ProcessInfo.processInfo.thermalState.rawValue >= ProcessInfo.ThermalState.serious.rawValue
+    }
+
+    private func noteKeyTime(_ ms: Double) {
+        perf.keys += 1
+        perf.keyMillis += ms
+        perf.keyMax = max(perf.keyMax, ms)
+        if ms > 1000.0 / 60 { perf.slowKeys += 1 }
+    }
+
+    private func notePerfThermal() {
+        perf.hottest = max(perf.hottest, ProcessInfo.processInfo.thermalState.rawValue)
+    }
+
+    /// Adds what was measured since the last time to the app's 性能诊断 page.
+    private func flushPerf() {
+        if let times = session?.takeDecodeTimes() {
+            perf.decodes += times.count
+            perf.decodeMillis += times.millis
+            perf.decodeMax = max(perf.decodeMax, times.max)
+        }
+        notePerfThermal()
+        perf.memoryPeak = max(perf.memoryPeak, Self.memoryFootprintMB())
+        guard perf.keys > 0 || perf.decodes > 0 || perf.thermalPauses > 0 else { return }
+        SharedSettings.addPerf(perf)
+        perf = PerfReport()
+    }
+
+    /// The memory iOS counts against the keyboard's limit, in megabytes.
+    private static func memoryFootprintMB() -> Double {
+        var info = task_vm_info_data_t()
+        var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<integer_t>.size)
+        let result = withUnsafeMutablePointer(to: &info) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) { task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count) }
+        }
+        return result == KERN_SUCCESS ? Double(info.phys_footprint) / 1_048_576 : 0
     }
 
     override func textDidChange(_ textInput: UITextInput?) {

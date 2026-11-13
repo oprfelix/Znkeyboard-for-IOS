@@ -114,6 +114,20 @@ public enum SharedSettings {
         defaults.set(defaults.double(forKey: "aiRerankMillis") + millis, forKey: "aiRerankMillis")
     }
 
+    /// What the keyboard measured while typing, for the app's 性能诊断 page.
+    public static var perfReport: PerfReport {
+        defaults.data(forKey: "perfReport").flatMap { try? JSONDecoder().decode(PerfReport.self, from: $0) } ?? PerfReport()
+    }
+
+    /// Adds [more] to what was measured so far.
+    public static func addPerf(_ more: PerfReport) {
+        var report = perfReport
+        report.add(more)
+        if let data = try? JSONEncoder().encode(report) { defaults.set(data, forKey: "perfReport") }
+    }
+
+    public static func resetPerf() { defaults.removeObject(forKey: "perfReport") }
+
     public static var adaptiveTouch: Bool {
         get { flag("adaptiveTouch", default: true) }
         set { defaults.set(newValue, forKey: "adaptiveTouch") }
@@ -212,5 +226,40 @@ public enum SharedSettings {
             kSecAttrAccount as String: account,
             kSecAttrAccessGroup as String: keychainGroup,
         ]
+    }
+}
+
+/// Timings from the keyboard, added up across sessions until reset: how long a key took on the
+/// main thread, how long the engine took per reading, the memory used and how hot the phone got.
+public struct PerfReport: Codable, Equatable {
+    public var since = Date()
+    public var keys = 0
+    public var keyMillis = 0.0
+    public var keyMax = 0.0
+    /// Keys that took longer than a 60 Hz frame.
+    public var slowKeys = 0
+    public var decodes = 0
+    public var decodeMillis = 0.0
+    public var decodeMax = 0.0
+    /// The most memory the keyboard used, in megabytes.
+    public var memoryPeak = 0.0
+    /// ProcessInfo.ThermalState's raw value at its hottest: 0 nominal … 3 critical.
+    public var hottest = 0
+    /// Times AI 整句排序 was paused because the phone was hot.
+    public var thermalPauses = 0
+
+    public init() {}
+
+    public mutating func add(_ more: PerfReport) {
+        keys += more.keys
+        keyMillis += more.keyMillis
+        keyMax = max(keyMax, more.keyMax)
+        slowKeys += more.slowKeys
+        decodes += more.decodes
+        decodeMillis += more.decodeMillis
+        decodeMax = max(decodeMax, more.decodeMax)
+        memoryPeak = max(memoryPeak, more.memoryPeak)
+        hottest = max(hottest, more.hottest)
+        thermalPauses += more.thermalPauses
     }
 }

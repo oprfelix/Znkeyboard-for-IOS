@@ -89,6 +89,8 @@ final class KeyboardKeysView: UIView {
     static let pressedKey = UIColor { $0.userInterfaceStyle == .dark ? UIColor(white: 34.0 / 255, alpha: 1) : UIColor(red: 172.0 / 255, green: 177.0 / 255, blue: 185.0 / 255, alpha: 1) }
 
     var onKey: ((Key) -> Void)?
+    /// How long a touch took to handle on the main thread, in ms, for the 性能诊断 page.
+    var onKeyTime: ((Double) -> Void)?
     var onGlobe: ((UIView, UIEvent) -> Void)?
     /// Haptics need full access; without it the generator does nothing.
     var haptics: UIImpactFeedbackGenerator?
@@ -724,6 +726,8 @@ final class KeyboardKeysView: UIView {
     }
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+        let began = CACurrentMediaTime()
+        defer { onKeyTime?((CACurrentMediaTime() - began) * 1000) }
         keepDisplayFast()
         flushSpace()
         for touch in touches.sorted(by: { $0.timestamp < $1.timestamp }) {

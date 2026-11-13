@@ -608,12 +608,68 @@ struct KeyboardPage: View {
                 } footer: {
                     Text("振动和声音需要完全访问。")
                 }
+                Section {
+                    NavigationLink { PerfView() } label: { Label("性能诊断", systemImage: "gauge.with.dots.needle.33percent").labelStyle(.tile) }
+                } footer: {
+                    Text("打字觉得卡时，截图这一页发给我们。")
+                }
             }
             .scrollDismissesKeyboard(.interactively)
             .ambientBackground()
             .navigationTitle("键盘")
         }
     }
+}
+
+/// What the keyboard measured while typing: a screenshot of it says where a slow keyboard's time goes.
+struct PerfView: View {
+    @State private var report = SharedSettings.perfReport
+
+    private static let thermal = ["正常", "略热", "偏热，已降频", "过热"]
+
+    var body: some View {
+        List {
+            Section {
+                row("按键次数", "\(report.keys)")
+                row("每次按键平均", ms(report.keys > 0 ? report.keyMillis / Double(report.keys) : 0))
+                row("最慢的一次按键", ms(report.keyMax))
+                row("超过一帧（16.7 毫秒）", "\(report.slowKeys) 次")
+            } header: {
+                Text("按键响应（主线程）")
+            }
+            Section {
+                row("候选计算次数", "\(report.decodes)")
+                row("每次平均", ms(report.decodes > 0 ? report.decodeMillis / Double(report.decodes) : 0))
+                row("最慢的一次", ms(report.decodeMax))
+            } header: {
+                Text("候选计算（后台）")
+            }
+            Section {
+                row("内存峰值", String(format: "%.0f MB", report.memoryPeak))
+                row("手机最热时", Self.thermal[min(max(report.hottest, 0), 3)])
+                row("因发热暂停 AI 排序", "\(report.thermalPauses) 次")
+                row("统计开始于", report.since.formatted(date: .abbreviated, time: .shortened))
+            } header: {
+                Text("手机状态")
+            } footer: {
+                Text("数字在键盘收起或停顿几秒后更新。")
+            }
+            Section {
+                Button("清零重新统计", role: .destructive) {
+                    SharedSettings.resetPerf()
+                    report = SharedSettings.perfReport
+                }
+            }
+        }
+        .navigationTitle("性能诊断")
+        .onAppear { report = SharedSettings.perfReport }
+    }
+
+    private func row(_ title: String, _ value: String) -> some View {
+        HStack { Text(title); Spacer(); Text(value).foregroundStyle(.secondary).monospacedDigit() }
+    }
+
+    private func ms(_ value: Double) -> String { String(format: "%.1f 毫秒", value) }
 }
 
 /// One of the two layouts, drawn as a small keyboard; the chosen one is outlined in the tint.
