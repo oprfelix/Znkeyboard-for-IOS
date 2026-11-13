@@ -93,6 +93,9 @@ func aiChecks() async {
 }
 
 func learningChecks(_ args: [String]) {
+    // dict.bin lm.bin bench.tsv learn-cases.tsv (see README); with fewer, the checks that need
+    // them are skipped instead of indexing past the arguments.
+    guard args.count > 2 else { print("learning checks skipped: pass dict.bin and lm.bin"); return }
     guard let dict = MappedDictionary(path: args[1]), let model = LanguageModel(path: args[2]) else { fatalError("load") }
     let lexicon = PinyinLexicon(dictionary: dict, model: model)
     let engine = PinyinEngine(lexicon: lexicon)
@@ -109,6 +112,7 @@ func learningChecks(_ args: [String]) {
     check("user data round-trips", restored != nil)
 
     // The same run as Kotlin's --learn: full pinyin in order, picking the right words each time.
+    guard args.count > 4 else { print("learn run skipped: pass bench.tsv and learn-cases.tsv"); return }
     let bench = try! String(contentsOfFile: args[3], encoding: .utf8).split(separator: "\n")
     var pinyin: [String: String] = [:]
     for line in bench where !line.hasPrefix("#") {

@@ -737,6 +737,9 @@ final class KeyboardKeysView: UIView {
             haptics?.prepare()
             if playsSound { AudioServicesPlaySystemSound(1104) }
             showPopup(over: cell)
+            // The pressed key and its bubble go to the screen now, before the letter's work
+            // (candidates, the field), so a touch shows at once however long that takes.
+            CATransaction.flush()
             // The key is settled as the finger lands, so the letter need not wait for it to lift.
             // Space waits: held down, it moves the caret instead.
             if case .key(.language) = cell.action { beginLanguageHold(touch, cell) }

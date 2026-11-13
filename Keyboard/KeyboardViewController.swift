@@ -293,13 +293,33 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         view.window?.isMultipleTouchEnabled = true
-        view.window?.gestureRecognizers?.forEach { $0.delaysTouchesBegan = false }
-        // The window's own tap and pan recognizers made quick taps vanish before reaching the keys.
-        for recognizer in view.window?.gestureRecognizers ?? []
-        where recognizer is UITapGestureRecognizer || recognizer is UIPanGestureRecognizer || String(describing: type(of: recognizer)).contains("DoubleTap") {
-            recognizer.isEnabled = false
+        freeTouches()
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        // The system can add its recognizers after the keyboard appears.
+        freeTouches()
+    }
+
+    /// The system wraps the keyboard in several views with gesture recognizers of their own; any
+    /// that holds a touch back until it decides it isn't its gesture made light, quick taps arrive
+    /// late or not at all, so only a firm press typed. Every one above the keyboard lets touches
+    /// through at once, and the window's tap and pan recognizers (which ate quick taps) are off.
+    private func freeTouches() {
+        var ancestor = view.superview
+        while let current = ancestor {
+            for recognizer in current.gestureRecognizers ?? [] {
+                recognizer.delaysTouchesBegan = false
+                recognizer.delaysTouchesEnded = false
+                recognizer.cancelsTouchesInView = false
+                if current === view.window,
+                   recognizer is UITapGestureRecognizer || recognizer is UIPanGestureRecognizer || String(describing: type(of: recognizer)).contains("DoubleTap") {
+                    recognizer.isEnabled = false
+                }
+            }
+            ancestor = current.superview
         }
-        (view.window?.superview?.gestureRecognizers ?? []).forEach { $0.delaysTouchesBegan = false }
     }
 
     override func viewWillDisappear(_ animated: Bool) {
