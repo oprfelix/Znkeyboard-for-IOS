@@ -47,7 +47,7 @@ func aiChecks() async {
     let client = AIClient(session: URLSession(configuration: config), busyDelaysMs: [1, 1])
     let provider = AIProvider(baseURL: "https://api.example.com/", model: "m", apiKey: "test-key")
     StubProtocol.replies = [(200, reply("Hello there."))]
-    let text = try? await client.polish("helo", with: provider)
+    let text = try? await client.check("helo", with: provider)
     check("polish returns the text", text == "Hello there.", text as Any)
     check("address and key", StubProtocol.requests.last?.url?.absoluteString == "https://api.example.com/chat/completions" &&
         StubProtocol.requests.last?.value(forHTTPHeaderField: "Authorization") == "Bearer test-key")
@@ -62,26 +62,26 @@ func aiChecks() async {
     let read = ((StubProtocol.bodies.last?["messages"] as? [[String: Any]])?.first?["content"] as? String) ?? ""
     check("Chinese reads as English", read.contains("English"), read.prefix(80))
     StubProtocol.replies = [(503, "busy"), (503, "busy"), (200, reply("Done"))]
-    let retried = try? await client.polish("x", with: provider)
+    let retried = try? await client.check("x", with: provider)
     check("busy provider is tried again", retried == "Done", retried as Any)
     StubProtocol.replies = [(400, "response_format is not supported"), (200, reply("Plain"))]
-    let fallback = try? await client.polish("x", with: provider)
+    let fallback = try? await client.check("x", with: provider)
     check("falls back from json_schema", fallback == "Plain" && (StubProtocol.bodies.last?["response_format"] as? [String: Any])?["type"] as? String == "json_object")
     StubProtocol.replies = [(401, "bad key")]
-    do { _ = try await client.polish("x", with: provider); check("401 throws", false) } catch {
+    do { _ = try await client.check("x", with: provider); check("401 throws", false) } catch {
         check("401 says the key", AIClient.message(for: error, chinese: true).contains("API Key"))
     }
     // Google's reply to a wrong key, as its OpenAI endpoint sends it.
     StubProtocol.replies = [(400, "[{\"error\":{\"code\":400,\"message\":\"Please pass a valid API key\",\"status\":\"INVALID_ARGUMENT\"}}]")]
-    do { _ = try await client.polish("x", with: provider); check("Google 400 throws", false) } catch {
+    do { _ = try await client.check("x", with: provider); check("Google 400 throws", false) } catch {
         let said = AIClient.message(for: error, chinese: true)
         check("Google's 400 says the key", said.contains("API Key 无效"), said)
     }
     StubProtocol.replies = [(200, "{\"choices\":[{\"finish_reason\":\"length\",\"message\":{\"content\":\"{\"}}]}")]
-    do { _ = try await client.polish("x", with: provider); check("cut off throws", false) } catch {
+    do { _ = try await client.check("x", with: provider); check("cut off throws", false) } catch {
         check("cut off is too long", (error as? AIError) == .tooLong)
     }
-    do { _ = try await client.polish("x", with: AIProvider(baseURL: "http://x.test", model: "m", apiKey: "k")); check("http refused", false) } catch {
+    do { _ = try await client.check("x", with: AIProvider(baseURL: "http://x.test", model: "m", apiKey: "k")); check("http refused", false) } catch {
         check("http refused", (error as? AIError) == .badAddress)
     }
     StubProtocol.replies = [(200, "{\"data\":[{\"id\":\"models/gemini-x\"},{\"id\":\"text-embedding-1\"},{\"id\":\"deepseek-flash\"}]}")]
@@ -168,6 +168,7 @@ final class FakeField: TextTarget {
 }
 
 func fuzzyChecks(_ args: [String]) {
+    guard args.count > 2 else { print("fuzzy checks skipped: pass dict.bin and lm.bin"); return }
     guard let dict = MappedDictionary(path: args[1]), let model = LanguageModel(path: args[2]) else { fatalError("load") }
     let strict = PinyinEngine(lexicon: PinyinLexicon(dictionary: dict, model: model, fuzzy: []))
     let loose = PinyinEngine(lexicon: PinyinLexicon(dictionary: dict, model: model, fuzzy: .all))
@@ -185,6 +186,7 @@ func fuzzyChecks(_ args: [String]) {
 }
 
 func sessionChecks(_ args: [String]) {
+    guard args.count > 2 else { print("session checks skipped: pass dict.bin and lm.bin"); return }
     guard let dict = MappedDictionary(path: args[1]), let model = LanguageModel(path: args[2]) else { fatalError("load") }
     let lexicon = PinyinLexicon(dictionary: dict, model: model)
     let learner = PinyinLearner(data: PinyinUserData(), lexicon: lexicon)

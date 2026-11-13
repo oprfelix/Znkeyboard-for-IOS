@@ -26,8 +26,9 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
     /// iOS ask for permission.
     private var hasNewCopy = false
     private var pasteboardTimer: Timer?
-    /// The polished text to put in, and how many characters of the field it replaces (0 for a selection).
-    private var replacement: (text: String, replaces: Int)?
+    /// What a translation will replace: [original] as it was sent, either the selection or (when
+    /// [wholeField]) all the text the field showed around the caret; [text] the result once it is in.
+    private var replacement: (original: String, wholeField: Bool, text: String)?
     private var request: Task<Void, Never>?
     private let client = AIClient()
     private static let barHeight: CGFloat = 48
@@ -144,13 +145,13 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
         card.clipsToBounds = true
         card.onClose = { [weak self] in self?.closeCard() }
         card.onAction = { [weak self] in self?.cardAction() }
-        bar.onTranslate = { [weak self] in self?.rewrite(translating: true) }
+        bar.onTranslate = { [weak self] in self?.rewrite() }
         // As on Android: what is being typed goes in as the first candidate, then the field is translated.
         bar.onQuickTranslate = { [weak self] in
             guard let self, let session else { return }
             if session.isComposing { session.tapItem(0) }
             // The field reports the new text a moment after it goes in.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in self?.rewrite(translating: true) }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in self?.rewrite() }
         }
         bar.onOffer = { [weak self] in self?.readCopied() }
         bar.onDismissOffer = { [weak self] in
@@ -345,6 +346,8 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
         pasteboardTimer?.invalidate()
+        // A card left up would come back over another field, its 替换 aimed at text that isn't there.
+        if !card.isHidden { closeCard() }
         session?.settleOffer()
         saveLearning()
         saveSentenceScorerStats()
@@ -770,9 +773,9 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
         }
     }
 
-    /// Polishes or translates the selection, or else all the text the field shows around the caret.
-    private func rewrite(translating: Bool) {
-        guard canUseAI(then: { [weak self] in self?.rewrite(translating: translating) }) else { return }
+    /// Translates the selection, or else all the text the field shows around the caret.
+    private func rewrite() {
+        guard canUseAI(then: { [weak self] in self?.rewrite() }) else { return }
         let proxy = textDocumentProxy
         let selected = proxy.selectedText ?? ""
         let text = selected.isEmpty ? (proxy.documentContextBeforeInput ?? "") + (proxy.documentContextAfterInput ?? "") : selected
@@ -781,10 +784,9 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
             return
         }
         let language = SharedSettings.translateLanguage
-        replacement = (text, selected.isEmpty ? text.count : 0)
-        run(title: translating ? "翻译 → \(language.chineseName)" : "润色", keepsResult: true, flows: translating) { [client] in
-            translating ? try await client.translate(text, to: language, with: SharedSettings.provider)
-                : try await client.polish(text, with: SharedSettings.provider)
+        replacement = (text, selected.isEmpty, text)
+        run(title: "翻译 → \(language.chineseName)", keepsResult: true, flows: true) { [client] in
+            try await client.translate(text, to: language, with: SharedSettings.provider)
         }
     }
 
@@ -816,10 +818,21 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
     private func applyReplacement() {
         guard let replacement else { return }
         let proxy = textDocumentProxy
-        if replacement.replaces > 0 {
-            // Only what was read and sent goes: the field's context updates late, so it isn't read again.
-            proxy.adjustTextPosition(byCharacterOffset: (proxy.documentContextAfterInput ?? "").count)
-            for _ in 0..<replacement.replaces { proxy.deleteBackward() }
+        // Typing, moving the caret or another field since it was sent: replacing now would delete
+        // the wrong text, so nothing changes.
+        let now = replacement.wholeField
+            ? (proxy.documentContextBeforeInput ?? "") + (proxy.documentContextAfterInput ?? "")
+            : proxy.selectedText ?? ""
+        guard now == replacement.original else {
+            self.replacement = nil
+            card.showResult(title: "ZnKeyboard", body: "文字已经改动，请重新翻译。", actionTitle: nil)
+            showCard()
+            return
+        }
+        if replacement.wholeField {
+            // To the end of what was read (UTF-16 offsets, like every caret move here), then back over it.
+            proxy.adjustTextPosition(byCharacterOffset: (proxy.documentContextAfterInput ?? "").utf16.count)
+            for _ in 0..<replacement.original.count { proxy.deleteBackward() }
         }
         proxy.insertText(replacement.text)
         expectedBefore = proxy.documentContextBeforeInput

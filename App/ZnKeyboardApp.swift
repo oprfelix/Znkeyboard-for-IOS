@@ -181,7 +181,7 @@ final class Store: ObservableObject {
         status = nil
         defer { testing = false }
         do {
-            _ = try await AIClient().polish("hello", with: SharedSettings.provider)
+            _ = try await AIClient().check("hello", with: SharedSettings.provider)
             status = (true, "连接成功")
             return true
         } catch {

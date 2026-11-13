@@ -1,6 +1,6 @@
 import UIKit
 
-/// A translation or a polished text above the keys, so the keyboard stays up.
+/// A translation above the keys, so the keyboard stays up.
 final class ReadingCardView: UIView {
     var onClose: (() -> Void)?
     var onAction: (() -> Void)?

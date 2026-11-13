@@ -194,8 +194,9 @@ public enum SharedSettings {
         get {
             if let key = readKey(keyAccount) { return key }
             guard let shared = readKey(sharedKeyAccount) else { return "" }
-            writeKey(shared, keyAccount)
-            writeKey("", sharedKeyAccount)
+            // The old shared key goes only once it is safely in its new place (a locked phone can
+            // refuse the write), or it would be lost.
+            if writeKey(shared, keyAccount) { writeKey("", sharedKeyAccount) }
             return shared
         }
         set { writeKey(newValue, keyAccount) }
@@ -210,13 +211,22 @@ public enum SharedSettings {
         return String(decoding: data, as: UTF8.self)
     }
 
-    private static func writeKey(_ value: String, _ account: String) {
-        SecItemDelete(keyQuery(account) as CFDictionary)
-        guard !value.isEmpty else { return }
+    /// True when [value] is stored (or, empty, removed).
+    @discardableResult
+    private static func writeKey(_ value: String, _ account: String) -> Bool {
+        guard !value.isEmpty else {
+            let status = SecItemDelete(keyQuery(account) as CFDictionary)
+            return status == errSecSuccess || status == errSecItemNotFound
+        }
+        // Updated in place, so a refused write never leaves the account without its old key.
+        let update: [String: Any] = [kSecValueData as String: Data(value.utf8)]
+        let updated = SecItemUpdate(keyQuery(account) as CFDictionary, update as CFDictionary)
+        if updated == errSecSuccess { return true }
+        guard updated == errSecItemNotFound else { return false }
         var query = keyQuery(account)
         query[kSecValueData as String] = Data(value.utf8)
         query[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
-        SecItemAdd(query as CFDictionary, nil)
+        return SecItemAdd(query as CFDictionary, nil) == errSecSuccess
     }
 
     private static func keyQuery(_ account: String) -> [String: Any] {

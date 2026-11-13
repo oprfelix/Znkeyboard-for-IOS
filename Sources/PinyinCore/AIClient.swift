@@ -80,11 +80,11 @@ public struct TranslateLanguage: Hashable {
 }
 
 public enum AIError: Error, Equatable {
-    case notConfigured, tooLong, empty, refused, timedOut, offline, badAddress, invalidReply
+    case notConfigured, tooLong, empty, refused, timedOut, offline, badAddress, invalidReply, cancelled
     case http(Int, String)
 }
 
-/// Polish, translate and reading translation over an OpenAI-compatible chat API: a port of
+/// Translation to send and to read over an OpenAI-compatible chat API: a port of
 /// AgentChatClient.kt, so the two keyboards ask the same way and fail the same way.
 public final class AIClient {
     public static let maxSourceCharacters = 5000
@@ -97,7 +97,8 @@ public final class AIClient {
         busyDelays = busyDelaysMs
     }
 
-    public func polish(_ text: String, with provider: AIProvider) async throws -> String {
+    /// A short request that shows whether the key, model and address work.
+    public func check(_ text: String, with provider: AIProvider) async throws -> String {
         try await request(system: Prompts.rewrite, text: text, provider: provider)
     }
 
@@ -227,7 +228,11 @@ public final class AIClient {
         do {
             (data, response) = try await session.data(for: request)
         } catch let error as URLError {
-            throw error.code == .timedOut ? AIError.timedOut : AIError.offline
+            switch error.code {
+            case .timedOut: throw AIError.timedOut
+            case .cancelled: throw AIError.cancelled
+            default: throw AIError.offline
+            }
         }
         let code = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard (200...299).contains(code) else { throw AIError.http(code, String(decoding: data, as: UTF8.self)) }
@@ -255,6 +260,12 @@ public final class AIClient {
         for tag in ["think", "reasoning"] {
             content = content.replacingOccurrences(of: "(?is)<\(tag)>.*?</\(tag)>", with: "", options: .regularExpression)
         }
+        content = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Some models wrap the JSON in ``` fences despite the schema.
+        if content.hasPrefix("```") {
+            content = String(content.drop { $0 != "\n" }.dropFirst())
+            if content.hasSuffix("```") { content = String(content.dropLast(3)) }
+        }
         guard let payload = content.trimmingCharacters(in: .whitespacesAndNewlines).data(using: .utf8),
               let object = try? JSONSerialization.jsonObject(with: payload) as? [String: Any] else { throw AIError.invalidReply }
         return try finish(object["text"] as? String)
@@ -277,6 +288,7 @@ public final class AIClient {
         case .timedOut: return t("AI 服务响应超时，请稍后再试。", "The AI service took too long. Try again later.")
         case .offline: return t("无法连接 AI 服务，请检查网络。", "Couldn't reach the AI service. Check your connection.")
         case .badAddress: return t("接口地址必须以 https 开头。", "Use an https address.")
+        case .cancelled: return t("已取消。", "Cancelled.")
         case let .http(code, reply):
             // Google answers a wrong key with 400, not 401.
             if code == 400, reply.lowercased().contains("api key") || reply.contains("API_KEY_INVALID") {
