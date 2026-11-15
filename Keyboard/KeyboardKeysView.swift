@@ -91,6 +91,8 @@ final class KeyboardKeysView: UIView {
     var onKey: ((Key) -> Void)?
     /// How long a touch took to handle on the main thread, in ms, for the 性能诊断 page.
     var onKeyTime: ((Double) -> Void)?
+    /// How long the system held each touch before the keyboard got it, in milliseconds.
+    var onDeliveryTime: ((Double) -> Void)?
     var onGlobe: ((UIView, UIEvent) -> Void)?
     /// Haptics need full access; without it the generator does nothing.
     var haptics: UIImpactFeedbackGenerator?
@@ -728,6 +730,8 @@ final class KeyboardKeysView: UIView {
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
         let began = CACurrentMediaTime()
         defer { onKeyTime?((CACurrentMediaTime() - began) * 1000) }
+        // A touch's timestamp is when the finger landed, on the same clock as CACurrentMediaTime.
+        for touch in touches { onDeliveryTime?(max(0, began - touch.timestamp) * 1000) }
         keepDisplayFast()
         flushSpace()
         for touch in touches.sorted(by: { $0.timestamp < $1.timestamp }) {

@@ -46,6 +46,7 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        perf.memoryAtOpen = Self.memoryFootprintMB()
         // A hot phone slows down; AI 整句排序 rests until it cools.
         NotificationCenter.default.addObserver(forName: ProcessInfo.thermalStateDidChangeNotification, object: nil, queue: .main) { [weak self] _ in
             self?.notePerfThermal()
@@ -165,6 +166,7 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
         heightConstraint = height
         keys.onKey = { [weak self] key in self?.pressed(key) }
         keys.onKeyTime = { [weak self] ms in self?.noteKeyTime(ms) }
+        keys.onDeliveryTime = { [weak self] ms in self?.noteDelivery(ms) }
         keys.onLetter = { [weak self] text, tap, sample in self?.typed(text, tap, sample) }
         keys.typing = typing
         keys.onMoveCaret = { [weak self] steps in self?.moveCaret(steps) }
@@ -241,10 +243,13 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
               let vocabPath = Bundle.main.path(forResource: "charlm_vocab", ofType: "txt") else { return }
         sentenceScorerLoading = true
         DispatchQueue.global(qos: .utility).async { [weak self] in
+            let memoryBefore = Self.memoryFootprintMB()
             let model = CharModel(path: modelPath, vocabPath: vocabPath)
+            let added = Self.memoryFootprintMB() - memoryBefore
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.sentenceScorerLoading = false
+                self.perf.memoryScorer = max(self.perf.memoryScorer, added)
                 guard let model, SharedSettings.aiRerank else { return }
                 let scorer = TimedSentenceScorer(model)
                 self.sentenceScorer = scorer
@@ -268,6 +273,8 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
     }
 
     private func loadEngine() {
+        let memoryBefore = Self.memoryFootprintMB()
+        defer { perf.memoryEngine = max(perf.memoryEngine, Self.memoryFootprintMB() - memoryBefore) }
         let bundle = Bundle.main
         guard let dictPath = bundle.path(forResource: "dict", ofType: "bin"),
               let modelPath = bundle.path(forResource: "lm", ofType: "bin"),
@@ -408,6 +415,13 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
         if ms > 1000.0 / 60 { perf.slowKeys += 1 }
     }
 
+    private func noteDelivery(_ ms: Double) {
+        perf.deliveries += 1
+        perf.deliveryMillis += ms
+        perf.deliveryMax = max(perf.deliveryMax, ms)
+        if ms > 50 { perf.slowDeliveries += 1 }
+    }
+
     private func notePerfThermal() {
         perf.hottest = max(perf.hottest, ProcessInfo.processInfo.thermalState.rawValue)
     }
@@ -423,11 +437,14 @@ final class KeyboardViewController: UIInputViewController, TextTarget {
         perf.memoryPeak = max(perf.memoryPeak, Self.memoryFootprintMB())
         guard perf.keys > 0 || perf.decodes > 0 || perf.thermalPauses > 0 else { return }
         SharedSettings.addPerf(perf)
+        // The load sizes stay with this keyboard: they are measured once, at load.
+        let (open, engine, scorer) = (perf.memoryAtOpen, perf.memoryEngine, perf.memoryScorer)
         perf = PerfReport()
+        (perf.memoryAtOpen, perf.memoryEngine, perf.memoryScorer) = (open, engine, scorer)
     }
 
     /// The memory iOS counts against the keyboard's limit, in megabytes.
-    private static func memoryFootprintMB() -> Double {
+    nonisolated private static func memoryFootprintMB() -> Double {
         var info = task_vm_info_data_t()
         var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<integer_t>.size)
         let result = withUnsafeMutablePointer(to: &info) {

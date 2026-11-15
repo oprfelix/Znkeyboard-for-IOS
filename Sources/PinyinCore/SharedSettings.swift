@@ -257,8 +257,34 @@ public struct PerfReport: Codable, Equatable {
     public var hottest = 0
     /// Times AI 整句排序 was paused because the phone was hot.
     public var thermalPauses = 0
+    /// From the finger touching the glass (the touch's own timestamp) to the keyboard getting the
+    /// touch: time the system held it, which the key timings above don't see.
+    public var deliveries = 0
+    public var deliveryMillis = 0.0
+    public var deliveryMax = 0.0
+    /// Touches the system held for longer than 50 ms.
+    public var slowDeliveries = 0
+    /// Memory (MB) when the keyboard opened, what the dictionary and language model added, and
+    /// what the AI 整句排序 model added; the largest seen of each.
+    public var memoryAtOpen = 0.0
+    public var memoryEngine = 0.0
+    public var memoryScorer = 0.0
 
     public init() {}
+
+    /// Reports saved before a field existed read it as zero rather than failing.
+    public init(from decoder: Decoder) throws {
+        self.init()
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        func get<T: Decodable>(_ key: CodingKeys, _ fallback: T) -> T { (try? c.decodeIfPresent(T.self, forKey: key)) ?? fallback }
+        since = get(.since, since)
+        keys = get(.keys, 0); keyMillis = get(.keyMillis, 0); keyMax = get(.keyMax, 0); slowKeys = get(.slowKeys, 0)
+        decodes = get(.decodes, 0); decodeMillis = get(.decodeMillis, 0); decodeMax = get(.decodeMax, 0)
+        memoryPeak = get(.memoryPeak, 0); hottest = get(.hottest, 0); thermalPauses = get(.thermalPauses, 0)
+        deliveries = get(.deliveries, 0); deliveryMillis = get(.deliveryMillis, 0); deliveryMax = get(.deliveryMax, 0)
+        slowDeliveries = get(.slowDeliveries, 0)
+        memoryAtOpen = get(.memoryAtOpen, 0); memoryEngine = get(.memoryEngine, 0); memoryScorer = get(.memoryScorer, 0)
+    }
 
     public mutating func add(_ more: PerfReport) {
         keys += more.keys
@@ -271,5 +297,12 @@ public struct PerfReport: Codable, Equatable {
         memoryPeak = max(memoryPeak, more.memoryPeak)
         hottest = max(hottest, more.hottest)
         thermalPauses += more.thermalPauses
+        deliveries += more.deliveries
+        deliveryMillis += more.deliveryMillis
+        deliveryMax = max(deliveryMax, more.deliveryMax)
+        slowDeliveries += more.slowDeliveries
+        memoryAtOpen = max(memoryAtOpen, more.memoryAtOpen)
+        memoryEngine = max(memoryEngine, more.memoryEngine)
+        memoryScorer = max(memoryScorer, more.memoryScorer)
     }
 }

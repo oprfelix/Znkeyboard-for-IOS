@@ -638,6 +638,15 @@ struct PerfView: View {
                 Text("按键响应（主线程）")
             }
             Section {
+                row("每次平均", ms(report.deliveries > 0 ? report.deliveryMillis / Double(report.deliveries) : 0))
+                row("最慢的一次", ms(report.deliveryMax))
+                row("超过 50 毫秒", "\(report.slowDeliveries) 次")
+            } header: {
+                Text("系统传递延迟（手指落下到键盘收到）")
+            } footer: {
+                Text("这段时间系统还没把触摸交给键盘，上面的按键用时不包括它。")
+            }
+            Section {
                 row("候选计算次数", "\(report.decodes)")
                 row("每次平均", ms(report.decodes > 0 ? report.decodeMillis / Double(report.decodes) : 0))
                 row("最慢的一次", ms(report.decodeMax))
@@ -646,6 +655,10 @@ struct PerfView: View {
             }
             Section {
                 row("内存峰值", String(format: "%.0f MB", report.memoryPeak))
+                row("　键盘打开时", String(format: "%.0f MB", report.memoryAtOpen))
+                row("　词库和语言模型", String(format: "+%.0f MB", report.memoryEngine))
+                row("　AI 整句排序模型", String(format: "+%.0f MB", report.memoryScorer))
+                row("　打字过程中增加", String(format: "+%.0f MB", max(0, report.memoryPeak - report.memoryAtOpen - report.memoryEngine - report.memoryScorer)))
                 row("手机最热时", Self.thermal[min(max(report.hottest, 0), 3)])
                 row("因发热暂停 AI 排序", "\(report.thermalPauses) 次")
                 row("统计开始于", report.since.formatted(date: .abbreviated, time: .shortened))
